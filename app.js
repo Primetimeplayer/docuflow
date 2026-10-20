@@ -25,17 +25,17 @@
   };
 
   const FIELDS = [
-    { key: 'firstName', label: 'First name', placeholder: 'Iryna' },
-    { key: 'surname', label: 'Surname', placeholder: 'Kovalenko' },
+    { key: 'firstName', label: 'First name', placeholder: 'First name' },
+    { key: 'surname', label: 'Surname', placeholder: 'Surname' },
     { key: 'dob', label: 'Date of birth', type: 'date' },
-    { key: 'nationality', label: 'Nationality', placeholder: 'Ukrainian' },
-    { key: 'passportNo', label: 'Passport number', placeholder: 'FP4829163' },
+    { key: 'nationality', label: 'Nationality', placeholder: 'e.g. Ukrainian' },
+    { key: 'passportNo', label: 'Passport number', placeholder: '9 characters' },
     { key: 'passportExpiry', label: 'Passport expiry', type: 'date' },
-    { key: 'pesel', label: 'PESEL', placeholder: '94031212345', inputmode: 'numeric', maxlength: 11 },
+    { key: 'pesel', label: 'PESEL', placeholder: '11 digits', inputmode: 'numeric', maxlength: 11 },
     { key: 'email', label: 'Email', type: 'email', placeholder: 'name@example.com' },
-    { key: 'fatherName', label: "Father's name", placeholder: 'Not on document' },
-    { key: 'motherName', label: "Mother's name", placeholder: 'Not on document' },
-    { key: 'forkliftLicenceNo', label: 'Forklift licence no.', placeholder: 'UDT/2026/01733' },
+    { key: 'fatherName', label: "Father's name", placeholder: 'Optional' },
+    { key: 'motherName', label: "Mother's name", placeholder: 'Optional' },
+    { key: 'forkliftLicenceNo', label: 'Forklift licence no.', placeholder: 'UDT/YYYY/NNNNN' },
     { key: 'licenceExpiry', label: 'Licence expiry', type: 'date' },
     { key: 'residenceCardExpiry', label: 'Residence card expiry', type: 'date' }
   ];
@@ -61,6 +61,7 @@
       preview: '',
       detection: '',
       fileName: '',
+      files: [],
       fields: blankFields(),
       auto: {},
       result: null,
@@ -247,13 +248,13 @@
     const docs = workers.reduce(function (sum, w) { return sum + (w.documents ? w.documents.length : 0); }, 0);
     const minutes = docs * 6;
     const items = D.expiryItems(workers);
-    const near = items.filter(function (i) { return i.days >= 0 && i.days <= 30; });
+    const near = items.filter(function (i) { return i.days <= 30; });
     const breakdown = D.expiryBreakdown(items, 30);
     const recent = workers.slice(0, 6);
 
     return pageHead(
       'Overview',
-      'Good morning, Anna',
+      (new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening') + ', Anna',
       'Here is what needs your attention across the agency today.',
       '<a class="btn btn-primary" href="#/new"><span class="plus">+</span> Upload documents</a>'
     ) +
@@ -413,9 +414,10 @@
             FIELDS.map(function (f) {
               const value = draft[f.key] || '';
               const hint = f.key === 'pesel' ? peselHintMarkup(value, draft.dob) : '';
+              const dateText = !state.editing && f.type === 'date';
               return '<div class="field" data-worker-wrap="' + f.key + '">' +
                 '<label for="w-' + f.key + '">' + esc(f.label) + '</label>' +
-                '<input id="w-' + f.key + '" data-worker-field="' + f.key + '" type="' + (f.type || 'text') + '" value="' + esc(value) + '"' +
+                '<input id="w-' + f.key + '" data-worker-field="' + f.key + '" type="' + (dateText ? 'text' : (f.type || 'text')) + '" value="' + esc(dateText ? (value ? D.formatDate(value) : '') : value) + '"' +
                 (f.inputmode ? ' inputmode="' + f.inputmode + '"' : '') + (f.maxlength ? ' maxlength="' + f.maxlength + '"' : '') +
                 (state.editing ? '' : ' disabled') + ' placeholder="Not recorded">' +
                 hint +
@@ -552,7 +554,7 @@
           (flow.detection ? '<span class="pill-detect">' + esc(flow.detection) + '</span>' : '<span class="chip chip-neutral">' + (flow.busy ? 'Reading document…' : 'Document loaded') + '</span>') +
           '<button type="button" class="btn btn-quiet btn-small" data-action="choose-file">Replace file</button>' +
         '</div>' +
-        '<input type="file" id="file-input" class="sr-only" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">' +
+        '<input type="file" id="file-input" class="sr-only" aria-label="Choose a document file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">' +
         '</div>';
     }
     return '<div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Upload a document">' +
@@ -560,7 +562,7 @@
       '<p class="dropzone-title">Drop a document here</p>' +
       '<p class="dropzone-text">or <button type="button" class="link-button" data-action="choose-file">browse your files</button></p>' +
       '<p class="dropzone-hint">JPG, PNG or PDF · first page</p>' +
-      '<input type="file" id="file-input" class="sr-only" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">' +
+      '<input type="file" id="file-input" class="sr-only" aria-label="Choose a document file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">' +
       '</div>';
   }
 
@@ -816,6 +818,13 @@
     flow.step = 2;
     flow.dirty = false;
 
+    const incoming = parsed.fields && parsed.fields.surname && parsed.fields.surname.value;
+    const current = String(flow.fields.surname || '').trim();
+    if (incoming && current && incoming.toLowerCase() !== current.toLowerCase()) {
+      flow.fields = blankFields(); flow.auto = {}; flow.files = [];
+      toast('Different person detected. Form cleared for this document.');
+    }
+
     FIELDS.forEach(function (f) {
       const read = parsed.fields && parsed.fields[f.key];
       if (read && read.value) {
@@ -828,7 +837,7 @@
       }
     });
 
-    if (parsed.fileName) flow.fileName = parsed.fileName;
+    if (parsed.fileName) { flow.fileName = parsed.fileName; if (flow.files.indexOf(parsed.fileName) < 0) flow.files.push(parsed.fileName); }
 
     const filled = FIELDS.filter(function (f) { return String(flow.fields[f.key] || '').trim(); }).length;
     const highlighted = FIELDS.filter(function (f) {
@@ -907,9 +916,12 @@
       if (target) target.focus();
       return;
     }
+    const pNo = String(flow.fields.passportNo || '').trim();
+    const pesel = String(flow.fields.pesel || '').trim();
+    const dup = state.workers.find(function (w) { return (pNo && w.passportNo === pNo) || (pesel && w.pesel === pesel); });
+    if (dup) { toast(D.fullName(dup) + ' is already in records (same passport or PESEL). Nothing was saved.', 'error'); return; }
     const worker = D.createWorker(flow.fields);
-    if (flow.fileName) worker.documents = [flow.fileName];
-    else worker.documents = [];
+    worker.documents = flow.files.slice();
     worker.status = D.computeStatus(worker);
     state.workers.unshift(worker);
     D.saveWorkers(state.workers);

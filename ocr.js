@@ -23,8 +23,8 @@
       text: [
         'FORKLIFT OPERATOR LICENCE',
         'UDT — Urzad Dozoru Technicznego',
-        'NAME: RAJESH KUMAR',
-        'LICENCE No: UDT/2026/01733',
+        'NAME: IRYNA KOVALENKO',
+        'LICENCE No: UDT/2026/02417',
         'DATE OF ISSUE: 04.02.2026',
         'VALID UNTIL: 14.05.2029'
       ].join('\n')
@@ -123,6 +123,8 @@
     return out;
   }
 
+  const MRZ_NUMERIC = [[9, 9], [13, 19], [21, 27], [42, 43]];
+
   function extractMrz(text) {
     const lines = String(text || '')
       .toUpperCase()
@@ -130,8 +132,11 @@
       .map((l) => l.replace(/\s+/g, '').replace(/[«»]/g, '<'))
       .filter(Boolean);
 
-    const numericRanges = [[0, 9], [13, 19], [21, 27], [28, 43]];
-    const start = lines.findIndex((l) => /^P[<A-Z0-9]{2}/.test(l) && l.length >= 24);
+    const numericRanges = MRZ_NUMERIC;
+    let start = -1;
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (/^P[A-Z<][A-Z<]{3}[A-Z<]*<<[A-Z<]/.test(lines[i]) && lines[i].length >= 30) { start = i; break; }
+    }
 
     if (start >= 0) {
       const line1 = normalizeMrzLine(lines[start], null);
@@ -164,7 +169,7 @@
   function parseMrz(lines) {
     if (!lines || lines.length < 2) return null;
     const line1 = normalizeMrzLine(lines[0], null);
-    const line2 = normalizeMrzLine(lines[1], [[0, 9], [13, 19], [21, 27], [28, 43]]);
+    const line2 = normalizeMrzLine(lines[1], MRZ_NUMERIC);
     if (line1.slice(0, 2) !== 'P<' || line2.length !== 44) return null;
 
     const issuing = line1.slice(2, 5).replace(/</g, '');
@@ -172,7 +177,7 @@
     const split = names.indexOf('<<');
     if (split < 0) return null;
     const surname = names.slice(0, split).replace(/</g, ' ').replace(/\s+/g, ' ').trim();
-    const given = names.slice(split + 2).replace(/</g, ' ').replace(/\s+/g, ' ').trim();
+    const given = names.slice(split + 2).split('<<')[0].replace(/</g, ' ').replace(/\s+/g, ' ').trim();
     if (!surname || !given) return null;
 
     const number = line2.slice(0, 9).replace(/</g, '');
@@ -678,8 +683,8 @@
       ctx.font = '600 20px "Courier New", monospace';
       ctx.fillText(text, 48, y + 26);
     };
-    row('Holder name', 'RAJESH KUMAR', 160);
-    row('Licence No.', 'UDT/2026/01733', 228);
+    row('Holder name', 'IRYNA KOVALENKO', 160);
+    row('Licence No.', 'UDT/2026/02417', 228);
     row('Date of issue', '04.02.2026', 296);
     row('Valid until', '14.05.2029', 364);
     row('Categories', 'WJO · FORKLIFT', 432);

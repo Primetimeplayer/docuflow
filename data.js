@@ -36,7 +36,9 @@
   function formatDate(iso, opts) {
     const d = parseISO(iso);
     if (!d) return '—';
-    return new Intl.DateTimeFormat('en-GB', opts || { day: '2-digit', month: 'short', year: 'numeric' }).format(d);
+    if (opts) return new Intl.DateTimeFormat('en-GB', opts).format(d);
+    const p = (n) => String(n).padStart(2, '0');
+    return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear();
   }
 
   function fullName(w) {
@@ -300,12 +302,12 @@
       const raw = global.localStorage.getItem(STORE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) return parsed.map(function (w) { w.status = computeStatus(w); return w; });
       }
     } catch (err) {
       console.warn('DocuFlow: could not read local records.', err);
     }
-    const seeded = seedWorkers();
+    const seeded = seedWorkers().map(function (w) { w.status = computeStatus(w); return w; });
     try {
       global.localStorage.setItem(STORE_KEY, JSON.stringify(seeded));
     } catch (err) {
@@ -362,7 +364,7 @@
       return n !== null && n <= 30;
     });
     if (soon) return 'Expiring';
-    const missingCore = !w.firstName || !w.surname || !w.passportNo || !w.passportExpiry;
+    const missingCore = !w.firstName || !w.surname || !w.passportNo || !w.passportExpiry || !w.pesel || (w.nationality !== 'Polish' && !w.residenceCardExpiry);
     if (missingCore) return 'Review';
     return 'Complete';
   }
@@ -400,7 +402,7 @@
   function expiryBreakdown(items, withinDays) {
     const counts = { passport: 0, visa: 0, forklift: 0 };
     items.forEach((i) => {
-      if (i.days <= withinDays && i.days >= 0) counts[i.short] = (counts[i.short] || 0) + 1;
+      if (i.days <= withinDays) counts[i.short] = (counts[i.short] || 0) + 1;
     });
     const parts = [];
     if (counts.passport) parts.push(counts.passport + ' ' + (counts.passport === 1 ? 'passport' : 'passports'));
