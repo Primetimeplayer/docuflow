@@ -109,6 +109,7 @@
     if (!raw || raw === '/') return { name: 'dashboard' };
     const parts = raw.split('/').filter(Boolean);
     if (parts[0] === 'workers' && parts[1]) return { name: 'worker', id: decodeURIComponent(parts[1]) };
+    if (parts[0] === 'me') return { name: 'me', sub: ['details','documents','notifications'].indexOf(parts[1]) >= 0 ? parts[1] : 'home' };
     if (['dashboard', 'workers', 'new', 'alerts', 'documents', 'reports', 'settings'].indexOf(parts[0]) >= 0) {
       return { name: parts[0] };
     }
@@ -228,7 +229,7 @@
   }
 
   function markNav(route) {
-    const active = route.name === 'worker' ? 'workers' : route.name;
+    const active = route.name === 'worker' ? 'workers' : route.name === 'me' ? 'me-' + route.sub : route.name;
     document.querySelectorAll('.nav-link[data-route]').forEach(function (a) {
       const on = a.dataset.route === active;
       a.classList.toggle('is-active', on);
@@ -688,8 +689,10 @@
     else if (route.name === 'documents') html = placeholderView('documents', 'Documents', 'A single library for every passport, visa and licence your agency holds.');
     else if (route.name === 'reports') html = placeholderView('reports', 'Reports', 'Monthly throughput, document turnaround and compliance reporting.');
     else if (route.name === 'settings') html = placeholderView('settings', 'Settings', 'Workspace preferences and team permissions.');
+    else if (route.name === 'me') html = window.DocuFlowEmployee.render(route.sub, { workers: state.workers, toast: toast });
     else html = notFoundView();
 
+    document.body.classList.toggle('is-employee', route.name === 'me');
     view.innerHTML = html;
     markNav(route);
     updateChrome();
@@ -703,7 +706,8 @@
       alerts: 'Expiry alerts',
       documents: 'Documents',
       reports: 'Reports',
-      settings: 'Settings'
+      settings: 'Settings',
+      me: 'My account'
     }[route.name] || 'Page not found');
     window.scrollTo(0, 0);
   }

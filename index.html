@@ -8,6 +8,7 @@
   <meta name="description" content="DocuFlow — a front-end demo of worker records, document auto-fill and expiry alerts for a recruitment agency. Fictional data only.">
   <title>Dashboard · DocuFlow</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="employee.css">
 </head>
 <body>
   <div class="app">
@@ -23,7 +24,7 @@
         <span class="brand-name">DocuFlow</span>
       </a>
 
-      <nav class="nav" aria-label="Main navigation">
+      <nav class="nav rec-only" aria-label="Main navigation">
         <p class="nav-label">Workspace</p>
         <a class="nav-link" data-route="dashboard" href="#/dashboard">
           <span class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg></span>
@@ -59,12 +60,56 @@
         </a>
       </nav>
 
-      <div class="sidebar-user">
+      <nav class="nav emp-only" aria-label="My account">
+        <p class="nav-label">Me</p>
+        <a class="nav-link" data-route="me-home" href="#/me">
+          <span class="icon" data-emp-icon="home"></span>
+          Home
+        </a>
+        <a class="nav-link" data-route="me-details" href="#/me/details">
+          <span class="icon" data-emp-icon="user"></span>
+          My details
+          <span class="nav-count c-blue" id="emp-count-details" hidden></span>
+        </a>
+        <a class="nav-link" data-route="me-documents" href="#/me/documents">
+          <span class="icon" data-emp-icon="doc"></span>
+          My documents
+          <span class="nav-count c-amber" id="emp-count-docs" hidden></span>
+        </a>
+        <a class="nav-link" data-route="me-notifications" href="#/me/notifications">
+          <span class="icon" data-emp-icon="bell"></span>
+          Notifications
+          <span class="nav-count" id="emp-count-notes" hidden></span>
+        </a>
+        <p class="nav-label">Work</p>
+        <button type="button" class="nav-link is-disabled" disabled aria-disabled="true" title="Shift planning is coming soon">
+          <span class="icon" data-emp-icon="cal"></span>
+          Shifts
+          <span class="nav-soon">Soon</span>
+        </button>
+        <button type="button" class="nav-link is-disabled" disabled aria-disabled="true" title="Hours tracking is coming soon">
+          <span class="icon" data-emp-icon="clock"></span>
+          Hours
+          <span class="nav-soon">Soon</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-user rec-only">
         <span class="avatar avatar-light">AK</span>
         <div>
           <strong>Anna Kowalska</strong>
           <small>Recruitment · Demo workspace</small>
         </div>
+        <a class="switch-view" href="#/me">Switch to employee view</a>
+      </div>
+
+      <div class="sidebar-user emp-only">
+        <span class="avatar avatar-light">OK</span>
+        <div>
+          <strong>Olena Kovalenko</strong>
+          <small>Rossmann · Warsaw</small>
+        </div>
+        <a class="switch-view" href="#/dashboard">Switch to recruiter view</a>
       </div>
     </aside>
 
@@ -96,6 +141,7 @@
 
   <script src="data.js"></script>
   <script src="ocr.js"></script>
+  <script src="employee.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
