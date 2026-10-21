@@ -61,6 +61,86 @@
     if (!urls[key]) urls[key] = URL.createObjectURL(blob);
     return urls[key];
   }
+  const SLOT_OF_KIND = { passport: 'passport', residence: 'residence', licence: 'licence', pesel: 'peselDoc' };
+  function slotOf(rec) { return rec.slot || SLOT_OF_KIND[rec.kind] || rec.kind || 'other'; }
+  function when(rec) { return rec.reviewedAt || rec.uploadedAt; }
+  function stamp(iso) {
+    const d = new Date(iso);
+    if (!iso || isNaN(d.getTime())) return '—';
+    const p = function (n) { return String(n).padStart(2, '0'); };
+    return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+  function history(workerId, slot) {
+    const list = forWorker(workerId).filter(function (d) { return slotOf(d) === slot && d.status !== 'Awaiting review'; })
+      .sort(function (a, b) { return new Date(when(b)) - new Date(when(a)); });
+    let newerVerified = null;
+    list.forEach(function (rec) {
+      if (rec.status === 'Verified') {
+        rec.isCurrent = newerVerified === null;
+        rec.replacedAt = newerVerified === null ? '' : newerVerified;
+        newerVerified = when(rec);
+      } else {
+        rec.isCurrent = false;
+        rec.replacedAt = '';
+      }
+    });
+    return list;
+  }
+  function current(workerId, slot) {
+    return history(workerId, slot).filter(function (d) { return d.isCurrent; })[0] || null;
+  }
+  function auditLine(rec) {
+    return (rec.status === 'Rejected' ? 'Rejected' : 'Verified') +
+      (rec.reviewedBy ? ' by ' + rec.reviewedBy : '') + ' · ' + stamp(when(rec));
+  }
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function historyHtml(workerId, slot, opts) {
+    const list = history(workerId, slot);
+    if (!list.length) return '';
+    const review = !!(opts && opts.review);
+    return '<ul class="hist-list">' + list.map(function (rec) {
+      const currentVersion = rec.isCurrent;
+      const rejected = rec.status === 'Rejected';
+      const pill = rejected ? 'Rejected' : currentVersion ? 'Current' : 'Replaced ' + stamp(rec.replacedAt).slice(0, 10);
+      const view = review
+        ? '<a class="text-link" href="#/documents/' + encodeURIComponent(rec.id) + '">View</a>'
+        : '<a class="text-link" href="' + esc(url(rec, rec.original ? 'original' : 'preview')) + '" target="_blank" rel="noopener">View</a>';
+      return '<li class="hist-item' + (currentVersion ? ' is-current' : '') + (rejected ? ' is-rejected' : '') + '">' +
+        '<span class="hist-text">' +
+          '<span class="hist-name">' + esc(rec.fileName) + '</span>' +
+          '<span class="hist-meta">Uploaded by ' + (rec.uploadedBy === 'employee' ? 'Employee' : 'Recruiter') + ' · ' + stamp(rec.uploadedAt).slice(0, 10) + '</span>' +
+          '<span class="hist-audit">' + esc(auditLine(rec)) + (rejected && rec.reason ? ' · Reason: ' + esc(rec.reason) : '') + '</span>' +
+        '</span>' +
+        '<span class="hist-pill">' + esc(pill) + '</span>' +
+        '<span class="hist-actions">' + view +
+          '<button type="button" class="btn btn-quiet btn-small" data-hist-download="' + esc(rec.id) + '">Download</button>' +
+        '</span>' +
+        '</li>';
+    }).join('') + '</ul>';
+  }
+  function download(rec) {
+    if (!rec) return;
+    const useOriginal = !!rec.original;
+    const href = url(rec, useOriginal ? 'original' : 'preview');
+    if (!href) return;
+    let name = rec.fileName || 'document';
+    if (!useOriginal) name = name.replace(/\.[^./]+$/, '') + '.jpg';
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+  document.addEventListener('click', function (event) {
+    const el = event.target.closest('[data-hist-download]');
+    if (!el) return;
+    download(get(el.dataset.histDownload));
+  });
   async function clear() { items = []; Object.keys(urls).forEach(function (k) { URL.revokeObjectURL(urls[k]); delete urls[k]; }); if (db) await req(store('readwrite').clear()); }
-  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES };
+  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, stamp, download };
 })(window);

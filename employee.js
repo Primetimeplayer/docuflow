@@ -536,6 +536,14 @@
 
   /* ------------------------------------------------------------ documents */
 
+  const openHistory = {};
+
+  document.addEventListener('toggle', function (event) {
+    const el = event.target;
+    if (!el || !el.dataset || !el.dataset.histSlot) return;
+    openHistory[el.dataset.histSlot] = el.open;
+  }, true);
+
   function documentsView(w) {
     const docs = docsFor(w);
     const states = docs.map(docState);
@@ -563,12 +571,18 @@
       const state = docState(doc);
       const uploading = busyDoc === doc.id;
       const actions = [];
+      const currentVersion = window.DocuFlowStore ? window.DocuFlowStore.current(w.id, doc.id) : null;
+      const hist = window.DocuFlowStore ? window.DocuFlowStore.history(w.id, doc.id) : [];
       if (doc.upload !== false && (!doc.noExpiry || doc.kind === 'pesel') && !doc.receipt) {
         const primary = state.needs ? 'btn btn-primary' : 'btn';
         actions.push('<button type="button" class="' + primary + ' btn-small" data-emp="upload" data-doc="' + doc.id + '"' + (busyDoc ? ' disabled' : '') + '>' +
           (uploading ? 'Reading… ' + Math.round(busyPct * 100) + '%' : 'Upload new version') + '</button>');
       }
-      actions.push('<button type="button" class="btn btn-small" data-emp="download">Download</button>');
+      if (currentVersion) {
+        actions.push('<button type="button" class="btn btn-small" data-hist-download="' + esc(currentVersion.id) + '">Download</button>');
+      } else {
+        actions.push('<button type="button" class="btn btn-small" data-emp="download">Download</button>');
+      }
 
       return '<article class="card emp-doc">' +
         '<div class="emp-doc-top">' + iconBox(doc.icon, state.tone) +
@@ -578,6 +592,12 @@
         '<div class="emp-exp' + (state.boxTone ? ' ' + state.boxTone : '') + '"><span>' + state.box + '</span><small>' + esc(state.small) + '</small></div>' +
         reviewMarkup(w, doc) +
         '<div class="emp-actions">' + actions.join('') + '</div>' +
+        (hist.length
+          ? '<details class="hist" data-hist-slot="' + esc(doc.id) + '"' + (openHistory[doc.id] ? ' open' : '') + '>' +
+            '<summary>History · ' + hist.length + (hist.length === 1 ? ' version' : ' versions') + '</summary>' +
+            window.DocuFlowStore.historyHtml(w.id, doc.id) +
+            '</details>'
+          : '') +
         '</article>';
     }).join('');
 
@@ -1028,7 +1048,7 @@
         input.click();
       }
     } else if (action === 'download') {
-      ctx.toast('Demo only: files aren\'t stored in this demo.');
+      ctx.toast('No verified copy yet. Upload one and your coordinator will verify it.');
     } else if (action === 'doc-filter') {
       docFilter = el.dataset.value;
       rerender();

@@ -452,6 +452,8 @@
     return '<p class="field-hint' + (info.state === 'valid' ? ' is-valid' : info.state === 'invalid' ? ' is-invalid' : '') + '" data-pesel-hint>' + esc(info.text) + '</p>';
   }
 
+  const REVIEWER = 'Anna Kowalska';
+
   function docDate(iso) {
     return iso ? D.formatDate(String(iso).slice(0, 10)) : '—';
   }
@@ -471,17 +473,28 @@
       return !stored.some(function (doc) { return doc.fileName === name; });
     });
     const total = stored.length + demo.length;
+    const slots = [];
+    stored.forEach(function (doc) {
+      const slot = S.slotOf(doc);
+      if (slots.indexOf(slot) < 0) slots.push(slot);
+    });
     return '<section class="card">' +
       '<div class="card-head"><div><h2>Documents</h2><p class="card-sub">' + total + ' file' + (total === 1 ? '' : 's') + ' on record</p></div></div>' +
       (total
         ? '<ul class="doc-list">' +
-          stored.map(function (doc) {
+          stored.filter(function (doc) { return doc.status === 'Awaiting review'; }).map(function (doc) {
             return '<li class="doc-item">' +
               '<span class="doc-icon">' + ICONS.file + '</span>' +
               '<span class="doc-text"><span class="doc-name">' + esc(doc.fileName) + '</span><span class="doc-meta">' + esc(doc.type) + ' · ' + esc(docDate(doc.uploadedAt)) + '</span></span>' +
               docStatusPill(doc.status) +
               '<a class="btn btn-quiet btn-small" href="#/documents/' + encodeURIComponent(doc.id) + '">View</a>' +
               '</li>';
+          }).join('') +
+          slots.map(function (slot) {
+            const hist = S.history(worker.id, slot);
+            const html = S.historyHtml(worker.id, slot, { review: true });
+            if (!html) return '';
+            return '<li class="hist-group"><p class="hist-title">' + esc(hist[0].type) + ' · History</p>' + html + '</li>';
           }).join('') +
           demo.map(function (name) {
             return '<li class="doc-item">' +
@@ -576,11 +589,11 @@
     const original = S.url(doc, 'original');
     const who = doc.uploadedBy === 'employee' ? 'the employee' : 'a recruiter';
     const pending = doc.status === 'Awaiting review';
-    const rows = reviewRows(doc, worker);
-    const reviewed = doc.reviewedAt || doc.uploadedAt;
+    const rows = pending ? reviewRows(doc, worker) : readOnlyRows(doc);
+    const currentVersion = pending ? null : S.current(doc.workerId, S.slotOf(doc));
 
     return '<a class="back-link" href="#/documents">' + ICONS.back + ' All documents</a>' +
-      pageHead('Document review', esc(doc.type) + ' · ' + esc(worker ? D.fullName(worker) : 'Unknown worker'),
+      pageHead(pending ? 'Document review' : 'Document record', esc(doc.type) + ' · ' + esc(worker ? D.fullName(worker) : 'Unknown worker'),
         'Uploaded by ' + who + ' on ' + esc(docDate(doc.uploadedAt)) + ' · ' + esc(doc.fileName),
         docStatusPill(doc.status)) +
       '<div class="review-grid">' +
@@ -595,13 +608,18 @@
           '<div class="zoom-frame">' +
             (src ? '<img data-zoom-img src="' + src + '" alt="Preview of ' + esc(doc.fileName) + '" style="width:' + state.zoom + '%">' : '<p class="card-sub">No preview is stored for this file.</p>') +
           '</div>' +
-          (original ? '<div class="form-actions"><a class="btn btn-quiet btn-small" href="' + original + '" target="_blank" rel="noopener">Open original file</a></div>' : '') +
+          '<div class="form-actions">' +
+            (original ? '<a class="btn btn-quiet btn-small" href="' + original + '" target="_blank" rel="noopener">Open original file</a>' : '') +
+            '<button type="button" class="btn btn-quiet btn-small" data-hist-download="' + esc(doc.id) + '">Download</button>' +
+          '</div>' +
         '</section>' +
         '<section class="card">' +
-          '<div class="card-head"><div><h2>Read from document</h2><p class="card-sub">Changed values are highlighted</p></div></div>' +
+          '<div class="card-head"><div><h2>Read from document</h2><p class="card-sub">' + (pending ? 'Changed values are highlighted' : 'Read-only copy kept for reference') + '</p></div></div>' +
           (doc.warning ? '<div class="notice notice-warn"><strong>Check this</strong><span>' + esc(doc.warning) + '</span></div>' : '') +
           (rows
-            ? '<div class="table-wrap"><table class="table table-review"><thead><tr><th>Field</th><th>On record</th><th>On document</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+            ? (pending
+              ? '<div class="table-wrap"><table class="table table-review"><thead><tr><th>Field</th><th>On record</th><th>On document</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+              : '<div class="table-wrap"><table class="table table-review table-readonly"><thead><tr><th>Field</th><th>On document</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
             : '<div class="empty empty-small"><p class="empty-title">No fields were read</p><p class="empty-text">Check the preview before you apply it.</p></div>') +
           (pending
             ? '<label class="review-reject">Reason if you reject<textarea id="reject-reason" rows="2"></textarea></label>' +
@@ -609,7 +627,8 @@
                 '<button type="button" class="btn btn-quiet" data-action="reject-doc" data-id="' + esc(doc.id) + '">Reject</button>' +
                 '<button type="button" class="btn btn-primary" data-action="verify-doc" data-id="' + esc(doc.id) + '">Verify &amp; apply</button>' +
               '</div>'
-            : '<div class="notice ' + (doc.status === 'Rejected' ? 'notice-warn' : 'notice-ok') + '"><strong>' + esc(doc.status) + ' on ' + esc(docDate(reviewed)) + '</strong>' +
+            : '<div class="notice ' + (doc.status === 'Rejected' ? 'notice-warn' : 'notice-ok') + '"><strong data-audit>' + esc(S.auditLine(doc)) + '</strong>' +
+              (doc.status === 'Verified' ? '<span>' + (currentVersion && currentVersion.id === doc.id ? 'Current version' : 'Older version, kept for reference') + '</span>' : '') +
               (doc.reason ? '<span>Reason: ' + esc(doc.reason) + '</span>' : '') + '</div>') +
         '</section>' +
       '</div>';
@@ -651,6 +670,16 @@
     }).join('');
   }
 
+  function readOnlyRows(doc) {
+    const read = doc.fields || {};
+    return Object.keys(read).map(function (key) {
+      const value = String(read[key] === null || read[key] === undefined ? '' : read[key]).trim();
+      if (!value) return '';
+      const shown = REVIEW_DATES.test(key) ? D.formatDate(value) : value;
+      return '<tr><td>' + esc(reviewLabel(key)) + '</td><td>' + esc(shown) + '</td></tr>';
+    }).join('');
+  }
+
   function verifyDocument(id) {
     const doc = S.get(id);
     if (!doc) return;
@@ -671,7 +700,7 @@
     if (doc.fileName && worker.documents.indexOf(doc.fileName) < 0) worker.documents.push(doc.fileName);
     worker.status = D.computeStatus(worker);
     D.saveWorkers(state.workers);
-    S.update(id, { status: 'Verified', reason: '', reviewedAt: new Date().toISOString() }).then(function () {
+    S.update(id, { status: 'Verified', reason: '', reviewedAt: new Date().toISOString(), reviewedBy: REVIEWER }).then(function () {
       toast('Verified · ' + D.fullName(worker) + '’s record updated');
       render();
     });
@@ -685,7 +714,7 @@
       if (reasonEl) reasonEl.focus();
       return;
     }
-    S.update(id, { status: 'Rejected', reason: reason, reviewedAt: new Date().toISOString() }).then(function () {
+    S.update(id, { status: 'Rejected', reason: reason, reviewedAt: new Date().toISOString(), reviewedBy: REVIEWER }).then(function () {
       toast('Document rejected · the worker will see your reason');
       render();
     });
@@ -965,7 +994,7 @@
     else if (route.name === 'alerts') html = alertsView();
     else if (route.name === 'documents') html = libraryView();
     else if (route.name === 'doc') html = reviewView(route);
-    else if (route.name === 'reports') html = placeholderView('reports', 'Reports', 'Monthly throughput, document turnaround and compliance reporting.');
+    else if (route.name === 'reports') html = window.DocuFlowReports.render({ workers: state.workers, pageHead: pageHead, rerender: render });
     else if (route.name === 'settings') html = placeholderView('settings', 'Settings', 'Workspace preferences and team permissions.');
     else if (route.name === 'me') html = window.DocuFlowEmployee.render(route.sub, { workers: state.workers, toast: toast });
     else html = notFoundView();
@@ -1297,7 +1326,8 @@
         uploadedBy: 'recruiter',
         fields: upload.fields,
         status: 'Verified',
-        reviewedAt: new Date().toISOString()
+        reviewedAt: new Date().toISOString(),
+        reviewedBy: REVIEWER
       }, upload.file, upload.preview);
     }));
   }
