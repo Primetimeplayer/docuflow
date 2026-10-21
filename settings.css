@@ -161,3 +161,13 @@ html[data-theme="dark"] .match-changes .old, html[data-theme="dark"] .table-revi
 html[data-theme="dark"] .emp-add { background: var(--blue-soft); border-color: #2d4474; color: #cfe0ff; }
 html[data-theme="dark"] .emp-lock, html[data-theme="dark"] .emp-note.unread { background: #10182a; }
 html[data-theme="dark"] .emp-icobtn:hover { background: #1a2440; }
+/* Dark theme: leftover light surfaces */
+html[data-theme="dark"] .search, html[data-theme="dark"] .search-dashboard { background: var(--card); border-color: #34405b; }
+html[data-theme="dark"] .alert-item-li + .alert-item-li, html[data-theme="dark"] .doc-item + .doc-item { border-top-color: var(--line-soft); }
+html[data-theme="dark"] .step + .step { border-left-color: var(--line); }
+html[data-theme="dark"] .step-num { background: #1c2540; color: var(--muted-2); }
+html[data-theme="dark"] .step.is-done .step-num { background: var(--green-soft); border-color: #1f5a37; color: #86efac; }
+html[data-theme="dark"] .form-actions { background: #10182a; }
+html[data-theme="dark"] .empty-icon { background: #1c2848; color: #a9c4ff; }
+html[data-theme="dark"] .emp-autofill { background: var(--blue-soft); border-color: #2d4474; }
+html[data-theme="dark"] .status-neutral { background: #1c2540; color: var(--muted-2); }
