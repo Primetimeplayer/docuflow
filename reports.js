@@ -218,6 +218,15 @@
           by: doc.reviewedBy || 'Recruiter'
         });
       }
+      (doc.restores || []).forEach(function (restored) {
+        events.push({
+          at: restored.at,
+          action: 'Restored',
+          doc: doc,
+          worker: name,
+          by: restored.by
+        });
+      });
     });
     events.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
     const rows = events.slice(0, 10).map(function (event) {
@@ -234,7 +243,7 @@
       };
     });
     return tableCard('audit', 'Last 10 document actions',
-      'Who uploaded, verified or rejected what, and when',
+      'Who uploaded, verified, rejected or restored what, and when',
       ['When', 'Action', 'Document', 'Worker', 'By'], rows, '', 'No document activity yet');
   }
 

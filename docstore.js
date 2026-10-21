@@ -64,6 +64,14 @@
   const SLOT_OF_KIND = { passport: 'passport', residence: 'residence', licence: 'licence', pesel: 'peselDoc' };
   function slotOf(rec) { return rec.slot || SLOT_OF_KIND[rec.kind] || rec.kind || 'other'; }
   function when(rec) { return rec.reviewedAt || rec.uploadedAt; }
+  function lastRestore(rec) {
+    const list = rec && rec.restores;
+    return list && list.length ? list[list.length - 1] : null;
+  }
+  function activeAt(rec) {
+    const restored = lastRestore(rec);
+    return restored ? restored.at : when(rec);
+  }
   function stamp(iso) {
     const d = new Date(iso);
     if (!iso || isNaN(d.getTime())) return '—';
@@ -72,13 +80,13 @@
   }
   function history(workerId, slot) {
     const list = forWorker(workerId).filter(function (d) { return slotOf(d) === slot && d.status !== 'Awaiting review'; })
-      .sort(function (a, b) { return new Date(when(b)) - new Date(when(a)); });
+      .sort(function (a, b) { return new Date(activeAt(b)) - new Date(activeAt(a)); });
     let newerVerified = null;
     list.forEach(function (rec) {
       if (rec.status === 'Verified') {
         rec.isCurrent = newerVerified === null;
         rec.replacedAt = newerVerified === null ? '' : newerVerified;
-        newerVerified = when(rec);
+        newerVerified = activeAt(rec);
       } else {
         rec.isCurrent = false;
         rec.replacedAt = '';
@@ -92,6 +100,10 @@
   function auditLine(rec) {
     return (rec.status === 'Rejected' ? 'Rejected' : 'Verified') +
       (rec.reviewedBy ? ' by ' + rec.reviewedBy : '') + ' · ' + stamp(when(rec));
+  }
+  function restoreLine(rec) {
+    const restored = lastRestore(rec);
+    return restored ? 'Restored by ' + restored.by + ' · ' + stamp(restored.at) : '';
   }
   function esc(value) {
     return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function (c) {
@@ -114,9 +126,13 @@
           '<span class="hist-name">' + esc(rec.fileName) + '</span>' +
           '<span class="hist-meta">Uploaded by ' + (rec.uploadedBy === 'employee' ? 'Employee' : 'Recruiter') + ' · ' + stamp(rec.uploadedAt).slice(0, 10) + '</span>' +
           '<span class="hist-audit">' + esc(auditLine(rec)) + (rejected && rec.reason ? ' · Reason: ' + esc(rec.reason) : '') + '</span>' +
+          (restoreLine(rec) ? '<span class="hist-audit hist-restored">' + esc(restoreLine(rec)) + '</span>' : '') +
         '</span>' +
         '<span class="hist-pill">' + esc(pill) + '</span>' +
         '<span class="hist-actions">' + view +
+          (review && !rejected && rec.status === 'Verified' && !currentVersion
+            ? '<button type="button" class="btn btn-quiet btn-small" data-action="restore-doc" data-id="' + esc(rec.id) + '">Restore this version</button>'
+            : '') +
           '<button type="button" class="btn btn-quiet btn-small" data-hist-download="' + esc(rec.id) + '">Download</button>' +
         '</span>' +
         '</li>';
@@ -142,5 +158,5 @@
     download(get(el.dataset.histDownload));
   });
   async function clear() { items = []; Object.keys(urls).forEach(function (k) { URL.revokeObjectURL(urls[k]); delete urls[k]; }); if (db) await req(store('readwrite').clear()); }
-  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, stamp, download };
+  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, restoreLine, stamp, download };
 })(window);

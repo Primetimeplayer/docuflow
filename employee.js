@@ -629,6 +629,16 @@
 
     if (window.DocuFlowStore) {
       window.DocuFlowStore.forWorker(w.id).forEach(function (rec) {
+        (rec.restores || []).forEach(function (restored) {
+          notes.push({
+            id: 'stored:' + rec.id + ':restored:' + restored.at,
+            icon: 'check',
+            tone: 'blue',
+            title: 'Your ' + rec.type.replace(/ certificate$/, '') + ' record was restored to an earlier verified version',
+            body: 'Restored by ' + restored.by + ' · ' + window.DocuFlowStore.stamp(restored.at) + '. Your details now match that version.',
+            meta: ''
+          });
+        });
         if (rec.uploadedBy !== 'employee' || rec.status === 'Awaiting review') return;
         if (rec.status === 'Verified') {
           notes.push({

@@ -629,7 +629,11 @@
               '</div>'
             : '<div class="notice ' + (doc.status === 'Rejected' ? 'notice-warn' : 'notice-ok') + '"><strong data-audit>' + esc(S.auditLine(doc)) + '</strong>' +
               (doc.status === 'Verified' ? '<span>' + (currentVersion && currentVersion.id === doc.id ? 'Current version' : 'Older version, kept for reference') + '</span>' : '') +
-              (doc.reason ? '<span>Reason: ' + esc(doc.reason) + '</span>' : '') + '</div>') +
+              (S.restoreLine(doc) ? '<span data-restored>' + esc(S.restoreLine(doc)) + '</span>' : '') +
+              (doc.reason ? '<span>Reason: ' + esc(doc.reason) + '</span>' : '') + '</div>' +
+              (doc.status === 'Verified' && !(currentVersion && currentVersion.id === doc.id)
+                ? '<div class="form-actions"><button type="button" class="btn btn-primary" data-action="restore-doc" data-id="' + esc(doc.id) + '">Restore this version</button></div>'
+                : '')) +
         '</section>' +
       '</div>';
   }
@@ -680,11 +684,7 @@
     }).join('');
   }
 
-  function verifyDocument(id) {
-    const doc = S.get(id);
-    if (!doc) return;
-    const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
-    if (!worker) { toast('That worker is no longer in records.', 'error'); return; }
+  function applyDocFields(worker, doc) {
     Object.keys(doc.fields || {}).forEach(function (key) {
       if (key === 'sex') return;
       const value = doc.fields[key];
@@ -696,6 +696,56 @@
         worker[key] = String(value);
       }
     });
+  }
+
+  function restoreChanges(worker, doc) {
+    const read = doc.fields || {};
+    return Object.keys(read).reduce(function (lines, key) {
+      if (key === 'sex') return lines;
+      const next = String(read[key] === null || read[key] === undefined ? '' : read[key]).trim();
+      if (!next) return lines;
+      let current = key.indexOf('p:') === 0 ? (worker.profile ? worker.profile[key.slice(2)] : '') : worker[key];
+      current = String(current || '').trim();
+      if (current === next) return lines;
+      const date = REVIEW_DATES.test(key);
+      const show = function (value) { return value ? (date ? D.formatDate(value) : value) : '—'; };
+      lines.push(reviewLabel(key) + ': ' + show(current) + ' → ' + show(next));
+      return lines;
+    }, []);
+  }
+
+  function restoreDocument(id) {
+    const doc = S.get(id);
+    if (!doc) return;
+    if (doc.status !== 'Verified') { toast('Only verified versions can be restored.', 'error'); return; }
+    const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
+    if (!worker) { toast('That worker is no longer in records.', 'error'); return; }
+    const active = S.current(doc.workerId, S.slotOf(doc));
+    if (active && active.id === doc.id) { toast('This is already the current version.', 'error'); return; }
+    const changes = restoreChanges(worker, doc);
+    const message = [
+      'Restore this version of ' + D.fullName(worker) + '’s ' + doc.type + '?',
+      '',
+      'These changes will be applied:'
+    ].concat(changes.length ? changes : ['No field changes. It only becomes the current version.'])
+      .concat(['', 'Nothing is deleted. The current version is kept as Replaced.']);
+    if (!window.confirm(message.join('\n'))) return;
+    applyDocFields(worker, doc);
+    worker.status = D.computeStatus(worker);
+    D.saveWorkers(state.workers);
+    const restores = (doc.restores || []).concat([{ at: new Date().toISOString(), by: REVIEWER }]);
+    S.update(doc.id, { restores: restores }).then(function () {
+      toast('Restored · ' + D.fullName(worker) + '’s record now uses this version');
+      render();
+    });
+  }
+
+  function verifyDocument(id) {
+    const doc = S.get(id);
+    if (!doc) return;
+    const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
+    if (!worker) { toast('That worker is no longer in records.', 'error'); return; }
+    applyDocFields(worker, doc);
     worker.documents = worker.documents || [];
     if (doc.fileName && worker.documents.indexOf(doc.fileName) < 0) worker.documents.push(doc.fileName);
     worker.status = D.computeStatus(worker);
@@ -1427,6 +1477,8 @@
       if (img) img.style.width = state.zoom + '%';
     } else if (action === 'verify-doc') {
       verifyDocument(actionEl.dataset.id);
+    } else if (action === 'restore-doc') {
+      restoreDocument(actionEl.dataset.id);
     } else if (action === 'reject-doc') {
       rejectDocument(actionEl.dataset.id);
     } else if (action === 'go-new') {
