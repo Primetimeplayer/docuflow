@@ -231,22 +231,36 @@
   }
 
   /* PESEL: 11 digits, weights 1,3,7,9,1,3,7,9,1,3 for the first ten. */
+  const PESEL_SKIP = /\b(tel|telefon|phone|fax|faks|e-?mail|nr\s+dokumentu|identyfikator|wniosk|znak\s+sprawy|transak|konto|account|ref)/i;
+
   function parsePesel(text, dob) {
-    const compact = String(text || '').replace(/\s+/g, '');
-    const match = /(?:^|[^0-9])([0-9]{11})(?![0-9])/.exec(compact);
-    if (!match) return null;
-    const number = match[1];
+    const lines = String(text || '').split(/\r?\n/);
+    let labelled = null, labelledBad = null, loose = null;
+    lines.forEach(function (line, i) {
+      if (PESEL_SKIP.test(line)) return;
+      const nearLabel = /pesel/i.test(line) || (i > 0 && /pesel/i.test(lines[i - 1])) || (i > 1 && /pesel/i.test(lines[i - 2]));
+      const re = /(?:^|[^0-9])([0-9]{11})(?![0-9])/g;
+      const compact = line.replace(/\s+/g, '');
+      let m;
+      while ((m = re.exec(compact))) {
+        const info = global.DocuFlowData.peselInfo(m[1], '');
+        const ok = info.checksumValid && info.dateValid;
+        if (nearLabel && ok && !labelled) labelled = m[1];
+        else if (nearLabel && !ok && !labelledBad) labelledBad = m[1];
+        else if (!nearLabel && ok && !loose) loose = m[1];
+      }
+    });
+    const number = labelled || loose || labelledBad;
+    if (!number) return null;
     const info = global.DocuFlowData.peselInfo(number, dob || '');
-    const valid = info.state === 'valid';
+    const valid = number !== labelledBad;
+    const note = valid ? (info.dobMatches ? 'Valid checksum' : info.message) : 'Check digit doesn’t match — please check the number';
+    const confidence = valid ? (info.dobMatches ? 95 : 60) : 40;
     return {
-      value: number,
-      confidence: valid ? 95 : 60,
-      source: 'PESEL',
-      info,
-      note: valid ? 'Valid checksum' : info.message,
+      value: number, valid, sex: Number(number[9]) % 2 === 0 ? 'F' : 'M', info,
       fields: {
-        pesel: { value: number, confidence: valid ? 95 : 60, source: 'PESEL', note: valid ? 'Valid checksum' : info.message },
-        dob: info.parsedDob && valid ? { value: info.parsedDob, confidence: 95, source: 'PESEL' } : null
+        pesel: { value: number, confidence, source: 'PESEL', note },
+        dob: valid && info.parsedDob ? { value: info.parsedDob, confidence: 95, source: 'PESEL' } : null
       }
     };
   }
@@ -295,11 +309,13 @@
     return out;
   }
 
+  const NAME_SKIP = /matki|ojca|rodzic|rodowe|mother|father|parent/i;
+
   function labeledName(text, labels) {
     const lines = String(text || '').split(/\r?\n/);
     for (const line of lines) {
-      if (!labels.test(line)) continue;
-      const value = line.replace(labels, '').replace(/^[\s:.-]+/, '').replace(/[^A-Za-zÀ-ÿ' -]/g, '').trim();
+      if (!labels.test(line) || NAME_SKIP.test(line)) continue;
+      const value = line.replace(labels, '').replace(/\(?\s*imiona\s*\)?/i, '').replace(/^[\s:.-]+/, '').replace(/[^A-Za-zÀ-ÿ' -]/g, '').trim();
       if (value.length >= 2) return titleCase(value.slice(0, 40));
     }
     return '';
@@ -344,7 +360,7 @@
       if (dobIso) fields.dob = { value: dobIso, confidence: 90, source };
     }
     const surname = labeledName(text, /surname|nazwisko/i);
-    const given = labeledName(text, /given\s+names?|first\s+name|imi[eę]/i);
+    const given = labeledName(text, /given\s+names?|first\s+name|\bimi[eęg](?![a-z])/i);
     if (surname) fields.surname = { value: surname, confidence: 90, source };
     if (given) fields.firstName = { value: given, confidence: 90, source };
     const nat = /nationality[:\s]+([A-Za-zÀ-ÿ ]+)/i.exec(String(text || ''));
@@ -360,10 +376,32 @@
     };
   }
 
+  /* Polish "Zaświadczenie o nadaniu numeru PESEL". */
+  function parsePeselCert(text) {
+    const base = parseResidence(text, '');
+    const fields = {};
+    ['surname', 'firstName', 'dob', 'pesel'].forEach(function (key) {
+      if (base.fields[key]) fields[key] = Object.assign({}, base.fields[key], { source: key === 'pesel' ? 'PESEL' : 'PESEL certificate' });
+    });
+    const sexLine = /p[lł]e[cć¢]\W+(kobieta|m[eę][zż]czyzna)/i.exec(String(text || ''));
+    if (sexLine) fields.sex = { value: /^k/i.test(sexLine[1]) ? 'F' : 'M', confidence: 90, source: 'PESEL certificate' };
+    const pesel = parsePesel(text, fields.dob ? fields.dob.value : '');
+    if (pesel && fields.sex && fields.pesel && pesel.sex !== fields.sex.value) {
+      fields.pesel = Object.assign({}, fields.pesel, { confidence: 60, note: 'PESEL sex digit doesn’t match the document' });
+    }
+    return { kind: 'pesel', typeLabel: 'PESEL certificate detected', fields };
+  }
+
+  function isPeselCert(text) {
+    return /pesel/i.test(text) && /nadani|nadano|za[sś$]wiadcz|pesel number assignment/i.test(text);
+  }
+
   function parseText(text) {
     const mrzLines = extractMrz(text);
     const mrz = mrzLines ? parseMrz(mrzLines) : null;
     let result = mrz;
+
+    if (!result && isPeselCert(text)) result = parsePeselCert(text);
 
     if (!result) {
       result = parseResidence(text, '');
@@ -390,7 +428,7 @@
     }
 
     /* A separate PESEL can appear on a passport or licence too. */
-    if (result.kind !== 'residence') {
+    if (result.kind !== 'residence' && result.kind !== 'pesel') {
       const pesel = parsePesel(text, result.fields.dob ? result.fields.dob.value : '');
       if (pesel) {
         if (!result.fields.pesel) result.fields.pesel = pesel.fields.pesel;

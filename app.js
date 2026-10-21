@@ -4,6 +4,7 @@
 
   const D = window.DocuFlowData;
   const OCR = window.DocuFlowOCR;
+  const S = window.DocuFlowStore;
 
   const ICONS = {
     dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>',
@@ -67,6 +68,8 @@
       result: null,
       error: '',
       step: 1,
+      uploads: [],
+      match: null,
       dirty: false,
       draftSaved: false
     };
@@ -80,6 +83,10 @@
     alertFilter: 'all',
     editing: false,
     workerDraft: null,
+    docStatus: 'All',
+    docType: 'all',
+    docQuery: '',
+    zoom: 100,
     flow: freshFlow(),
     route: null
   };
@@ -109,6 +116,7 @@
     if (!raw || raw === '/') return { name: 'dashboard' };
     const parts = raw.split('/').filter(Boolean);
     if (parts[0] === 'workers' && parts[1]) return { name: 'worker', id: decodeURIComponent(parts[1]) };
+    if (parts[0] === 'documents' && parts[1]) return { name: 'doc', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'me') return { name: 'me', sub: ['details','documents','notifications'].indexOf(parts[1]) >= 0 ? parts[1] : 'home' };
     if (['dashboard', 'workers', 'new', 'alerts', 'documents', 'reports', 'settings'].indexOf(parts[0]) >= 0) {
       return { name: parts[0] };
@@ -226,10 +234,16 @@
       badge.textContent = near.length ? String(near.length) : '';
       badge.hidden = near.length === 0;
     }
+    const docsBadge = document.getElementById('nav-doc-count');
+    if (docsBadge) {
+      const pending = S.all().filter(function (doc) { return doc.status === 'Awaiting review'; }).length;
+      docsBadge.textContent = pending ? String(pending) : '';
+      docsBadge.hidden = pending === 0;
+    }
   }
 
   function markNav(route) {
-    const active = route.name === 'worker' ? 'workers' : route.name === 'me' ? 'me-' + route.sub : route.name;
+    const active = route.name === 'worker' ? 'workers' : route.name === 'doc' ? 'documents' : route.name === 'me' ? 'me-' + route.sub : route.name;
     document.querySelectorAll('.nav-link[data-route]').forEach(function (a) {
       const on = a.dataset.route === active;
       a.classList.toggle('is-active', on);
@@ -438,20 +452,243 @@
     return '<p class="field-hint' + (info.state === 'valid' ? ' is-valid' : info.state === 'invalid' ? ' is-invalid' : '') + '" data-pesel-hint>' + esc(info.text) + '</p>';
   }
 
+  function docDate(iso) {
+    return iso ? D.formatDate(String(iso).slice(0, 10)) : '—';
+  }
+
+  function docStatusPill(status) {
+    const cls = status === 'Verified' ? 'status-complete' : status === 'Rejected' ? 'status-expiring' : 'status-review';
+    return '<span class="status ' + cls + '"><span class="status-dot"></span>' + esc(status) + '</span>';
+  }
+
+  function uploaderLabel(doc) {
+    return doc.uploadedBy === 'employee' ? 'Employee' : 'Recruiter';
+  }
+
   function documentsCard(worker) {
-    const docs = worker.documents || [];
+    const stored = S.forWorker(worker.id);
+    const demo = (worker.documents || []).filter(function (name) {
+      return !stored.some(function (doc) { return doc.fileName === name; });
+    });
+    const total = stored.length + demo.length;
     return '<section class="card">' +
-      '<div class="card-head"><div><h2>Documents</h2><p class="card-sub">' + docs.length + ' file' + (docs.length === 1 ? '' : 's') + ' on record</p></div><span class="chip chip-neutral">Demo files</span></div>' +
-      (docs.length
-        ? '<ul class="doc-list">' + docs.map(function (name) {
+      '<div class="card-head"><div><h2>Documents</h2><p class="card-sub">' + total + ' file' + (total === 1 ? '' : 's') + ' on record</p></div></div>' +
+      (total
+        ? '<ul class="doc-list">' +
+          stored.map(function (doc) {
+            return '<li class="doc-item">' +
+              '<span class="doc-icon">' + ICONS.file + '</span>' +
+              '<span class="doc-text"><span class="doc-name">' + esc(doc.fileName) + '</span><span class="doc-meta">' + esc(doc.type) + ' · ' + esc(docDate(doc.uploadedAt)) + '</span></span>' +
+              docStatusPill(doc.status) +
+              '<a class="btn btn-quiet btn-small" href="#/documents/' + encodeURIComponent(doc.id) + '">View</a>' +
+              '</li>';
+          }).join('') +
+          demo.map(function (name) {
             return '<li class="doc-item">' +
               '<span class="doc-icon">' + ICONS.file + '</span>' +
               '<span class="doc-text"><span class="doc-name">' + esc(name) + '</span><span class="doc-meta">' + esc(docLabel(name)) + '</span></span>' +
-              '<span class="chip chip-neutral chip-tiny">Stored</span>' +
+              '<span class="chip chip-neutral chip-tiny">Demo file</span>' +
               '</li>';
-          }).join('') + '</ul>'
+          }).join('') +
+          '</ul>'
         : '<div class="empty empty-small"><p class="empty-title">No documents yet</p><p class="empty-text">Upload a passport or licence to add files.</p></div>') +
       '</section>';
+  }
+
+  /* ---------------------------------------------------- documents library */
+
+  const DOC_STATUSES = ['All', 'Awaiting review', 'Verified', 'Rejected'];
+
+  function filteredDocs(list) {
+    const query = state.docQuery.trim().toLowerCase();
+    return list.filter(function (doc) {
+      if (state.docStatus !== 'All' && doc.status !== state.docStatus) return false;
+      if (state.docType !== 'all' && doc.kind !== state.docType) return false;
+      if (!query) return true;
+      const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
+      return !!worker && D.fullName(worker).toLowerCase().indexOf(query) >= 0;
+    });
+  }
+
+  function libraryView() {
+    const all = S.all();
+    const counts = {};
+    DOC_STATUSES.forEach(function (status) {
+      counts[status] = status === 'All' ? all.length : all.filter(function (doc) { return doc.status === status; }).length;
+    });
+    const chips = DOC_STATUSES.map(function (status) {
+      return '<button type="button" class="chip-filter' + (state.docStatus === status ? ' is-active' : '') + '" data-action="doc-status" data-value="' + esc(status) + '" aria-pressed="' + (state.docStatus === status) + '">' +
+        esc(status) + '<span class="chip-count">' + counts[status] + '</span></button>';
+    }).join('');
+    const types = Object.keys(S.TYPES).map(function (kind) {
+      return '<option value="' + esc(kind) + '"' + (state.docType === kind ? ' selected' : '') + '>' + esc(S.TYPES[kind]) + '</option>';
+    }).join('');
+
+    return pageHead('Records', 'Documents', 'Every document uploaded by workers and recruiters. Open one to check it against the worker’s record.') +
+      '<section class="card">' +
+        '<div class="table-toolbar">' +
+          '<div class="search"><span class="search-icon">' + ICONS.search + '</span>' +
+            '<input type="search" data-search="docs" value="' + esc(state.docQuery) + '" placeholder="Search by worker name" aria-label="Search by worker name">' +
+          '</div>' +
+          '<select class="doc-type-select" data-filter="doc-type" aria-label="Filter by document type"><option value="all">All types</option>' + types + '</select>' +
+          '<div class="chips" role="group" aria-label="Filter by status">' + chips + '</div>' +
+        '</div>' +
+        '<div id="docs-results">' + docsResults(filteredDocs(all)) + '</div>' +
+      '</section>';
+  }
+
+  function docsResults(list) {
+    if (!S.all().length) {
+      return emptyState('No documents yet', 'Documents appear here when a worker or recruiter uploads one.', '', '');
+    }
+    if (!list.length) {
+      return emptyState('No documents match these filters', 'Try another type or status, or search for a different worker.', '', '');
+    }
+    return '<p class="result-count">' + list.length + ' document' + (list.length === 1 ? '' : 's') + '</p>' +
+      '<div class="table-wrap"><table class="table table-docs">' +
+        '<thead><tr><th>Document</th><th>Worker</th><th>Uploaded</th><th>Status</th></tr></thead><tbody>' +
+        list.map(function (doc) {
+          const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
+          const src = S.url(doc);
+          const who = uploaderLabel(doc);
+          return '<tr data-href="#/documents/' + encodeURIComponent(doc.id) + '" tabindex="0">' +
+            '<td><div class="person">' +
+              (src ? '<img class="doc-thumb" src="' + src + '" alt="">' : '') +
+              '<div class="person-text"><span class="person-name">' + esc(doc.type) + '</span><span class="person-meta">Worker · ' + esc(who) + ' · ' + esc(docDate(doc.uploadedAt)) + '</span></div>' +
+            '</div></td>' +
+            '<td>' + (worker ? '<div class="person">' + avatar(worker) + '<div class="person-text"><span class="person-name">' + esc(D.fullName(worker)) + '</span><span class="person-meta">' + esc(worker.nationality) + '</span></div></div>' : '—') + '</td>' +
+            '<td>' + esc(who) + ' · ' + esc(docDate(doc.uploadedAt)) + '</td>' +
+            '<td>' + docStatusPill(doc.status) + '</td>' +
+            '</tr>';
+        }).join('') +
+        '</tbody></table></div>';
+  }
+
+  function reviewView(route) {
+    const doc = S.get(route.id);
+    if (!doc) {
+      return '<a class="back-link" href="#/documents">' + ICONS.back + ' All documents</a>' +
+        pageHead('Records', 'Document not found', 'That document is not in this browser’s store.', '<a class="btn btn-quiet" href="#/documents">Back to documents</a>') +
+        '<section class="card">' + emptyState('This document is not here', 'It may have been cleared with the demo data.', '', '') + '</section>';
+    }
+    const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
+    const src = S.url(doc);
+    const original = S.url(doc, 'original');
+    const who = doc.uploadedBy === 'employee' ? 'the employee' : 'a recruiter';
+    const pending = doc.status === 'Awaiting review';
+    const rows = reviewRows(doc, worker);
+    const reviewed = doc.reviewedAt || doc.uploadedAt;
+
+    return '<a class="back-link" href="#/documents">' + ICONS.back + ' All documents</a>' +
+      pageHead('Document review', esc(doc.type) + ' · ' + esc(worker ? D.fullName(worker) : 'Unknown worker'),
+        'Uploaded by ' + who + ' on ' + esc(docDate(doc.uploadedAt)) + ' · ' + esc(doc.fileName),
+        docStatusPill(doc.status)) +
+      '<div class="review-grid">' +
+        '<section class="card">' +
+          '<div class="card-head"><div><h2>Preview</h2><p class="card-sub">' + esc(doc.fileName) + '</p></div>' +
+            '<div class="zoom-controls">' +
+              '<button type="button" class="btn btn-quiet btn-small" data-action="zoom" data-value="out" aria-label="Zoom out">−</button>' +
+              '<button type="button" class="btn btn-quiet btn-small" data-action="zoom" data-value="fit">Fit</button>' +
+              '<button type="button" class="btn btn-quiet btn-small" data-action="zoom" data-value="in" aria-label="Zoom in">+</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="zoom-frame">' +
+            (src ? '<img data-zoom-img src="' + src + '" alt="Preview of ' + esc(doc.fileName) + '" style="width:' + state.zoom + '%">' : '<p class="card-sub">No preview is stored for this file.</p>') +
+          '</div>' +
+          (original ? '<div class="form-actions"><a class="btn btn-quiet btn-small" href="' + original + '" target="_blank" rel="noopener">Open original file</a></div>' : '') +
+        '</section>' +
+        '<section class="card">' +
+          '<div class="card-head"><div><h2>Read from document</h2><p class="card-sub">Changed values are highlighted</p></div></div>' +
+          (doc.warning ? '<div class="notice notice-warn"><strong>Check this</strong><span>' + esc(doc.warning) + '</span></div>' : '') +
+          (rows
+            ? '<div class="table-wrap"><table class="table table-review"><thead><tr><th>Field</th><th>On record</th><th>On document</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+            : '<div class="empty empty-small"><p class="empty-title">No fields were read</p><p class="empty-text">Check the preview before you apply it.</p></div>') +
+          (pending
+            ? '<label class="review-reject">Reason if you reject<textarea id="reject-reason" rows="2"></textarea></label>' +
+              '<div class="form-actions">' +
+                '<button type="button" class="btn btn-quiet" data-action="reject-doc" data-id="' + esc(doc.id) + '">Reject</button>' +
+                '<button type="button" class="btn btn-primary" data-action="verify-doc" data-id="' + esc(doc.id) + '">Verify &amp; apply</button>' +
+              '</div>'
+            : '<div class="notice ' + (doc.status === 'Rejected' ? 'notice-warn' : 'notice-ok') + '"><strong>' + esc(doc.status) + ' on ' + esc(docDate(reviewed)) + '</strong>' +
+              (doc.reason ? '<span>Reason: ' + esc(doc.reason) + '</span>' : '') + '</div>') +
+        '</section>' +
+      '</div>';
+  }
+
+  const REVIEW_LABELS = { sex: 'Sex' };
+  const REVIEW_DATES = /^(dob|.*Expiry)$/;
+
+  function reviewLabel(key) {
+    if (REVIEW_LABELS[key]) return REVIEW_LABELS[key];
+    const field = FIELDS.find(function (f) { return f.key === key; });
+    if (field) return field.label;
+    if (key.indexOf('p:') === 0) {
+      const words = key.slice(2).replace(/([A-Z])/g, ' $1').toLowerCase();
+      return words.charAt(0).toUpperCase() + words.slice(1);
+    }
+    return key;
+  }
+
+  function reviewRows(doc, worker) {
+    const read = doc.fields || {};
+    return Object.keys(read).map(function (key) {
+      const label = reviewLabel(key);
+      const next = String(read[key] === null || read[key] === undefined ? '' : read[key]).trim();
+      let current = '';
+      if (worker) current = key.indexOf('p:') === 0 ? (worker.profile ? worker.profile[key.slice(2)] : '') : worker[key];
+      current = String(current || '').trim();
+      const date = REVIEW_DATES.test(key);
+      const show = function (value) {
+        if (!value) return '—';
+        return esc(date ? D.formatDate(value) : value);
+      };
+      const changed = !!next && next !== current;
+      return '<tr' + (changed ? ' class="is-changed"' : '') + '>' +
+        '<td>' + esc(label) + '</td>' +
+        '<td>' + (changed ? '<span class="old">' + show(current) + '</span> →' : show(current)) + '</td>' +
+        '<td>' + (changed ? '<span class="new">' + show(next) + '</span>' : show(next)) + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function verifyDocument(id) {
+    const doc = S.get(id);
+    if (!doc) return;
+    const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
+    if (!worker) { toast('That worker is no longer in records.', 'error'); return; }
+    Object.keys(doc.fields || {}).forEach(function (key) {
+      if (key === 'sex') return;
+      const value = doc.fields[key];
+      if (value === null || value === undefined || String(value).trim() === '') return;
+      if (key.indexOf('p:') === 0) {
+        worker.profile = worker.profile || {};
+        worker.profile[key.slice(2)] = String(value);
+      } else {
+        worker[key] = String(value);
+      }
+    });
+    worker.documents = worker.documents || [];
+    if (doc.fileName && worker.documents.indexOf(doc.fileName) < 0) worker.documents.push(doc.fileName);
+    worker.status = D.computeStatus(worker);
+    D.saveWorkers(state.workers);
+    S.update(id, { status: 'Verified', reason: '', reviewedAt: new Date().toISOString() }).then(function () {
+      toast('Verified · ' + D.fullName(worker) + '’s record updated');
+      render();
+    });
+  }
+
+  function rejectDocument(id) {
+    const reasonEl = document.getElementById('reject-reason');
+    const reason = reasonEl ? String(reasonEl.value || '').trim().replace(/\.+$/, '') : '';
+    if (!reason) {
+      toast('Add a reason so the worker knows what to fix.', 'error');
+      if (reasonEl) reasonEl.focus();
+      return;
+    }
+    S.update(id, { status: 'Rejected', reason: reason, reviewedAt: new Date().toISOString() }).then(function () {
+      toast('Document rejected · the worker will see your reason');
+      render();
+    });
   }
 
   function expiryCard(worker) {
@@ -512,12 +749,52 @@
           '<form id="worker-form" class="form-grid two" autocomplete="off" data-form="new-worker">' +
             FIELDS.map(newFieldMarkup).join('') +
           '</form>' +
+          matchMarkup() +
           '<div class="form-actions">' +
             '<button type="button" class="btn btn-quiet" data-action="save-draft"' + (flow.busy ? ' disabled' : '') + '>Save draft</button>' +
             '<button type="button" class="btn btn-primary" data-action="confirm-worker"' + (flow.busy ? ' disabled' : '') + '>Confirm &amp; save worker</button>' +
           '</div>' +
           '<p class="form-footnote">' + (flow.draftSaved ? '<span class="draft-flag">Draft kept in this tab</span> · ' : '') + 'Nothing is saved until you confirm.</p>' +
         '</section>' +
+      '</div>';
+  }
+
+  function changedFields(worker, fields) {
+    return FIELDS.filter(function (f) {
+      const next = String(fields[f.key] === null || fields[f.key] === undefined ? '' : fields[f.key]).trim();
+      if (!next) return false;
+      return next !== String(worker[f.key] || '').trim();
+    }).map(function (f) {
+      return { key: f.key, label: f.label, old: String(worker[f.key] || '').trim(), value: String(fields[f.key]).trim() };
+    });
+  }
+
+  function fieldValueMarkup(key, value) {
+    if (!value) return '—';
+    return esc(/^(dob|passportExpiry|licenceExpiry|residenceCardExpiry)$/.test(key) ? D.formatDate(value) : value);
+  }
+
+  function matchMarkup() {
+    const flow = state.flow;
+    if (!flow.match) return '';
+    const worker = state.workers.find(function (w) { return w.id === flow.match.id; });
+    if (!worker) return '';
+    const changes = changedFields(worker, flow.fields);
+    const formDob = String(flow.fields.dob || '');
+    const dobDiffers = formDob && worker.dob && formDob !== worker.dob;
+    return '<div class="notice notice-warn" data-match>' +
+      '<strong>' + esc(D.fullName(worker)) + ' is already in records</strong>' +
+      '<span>Born ' + fieldValueMarkup('dob', worker.dob) + ' · PESEL ' + esc(worker.pesel || '—') + ' · Passport ' + esc(worker.passportNo || '—') + '</span>' +
+      (dobDiffers ? '<span><strong>Date of birth differs:</strong> this document says ' + fieldValueMarkup('dob', formDob) + '. Check it is the same person.</span>' : '') +
+      (changes.length
+        ? '<ul class="match-changes">' + changes.map(function (change) {
+            return '<li><b>' + esc(change.label) + ':</b> <span class="old">' + fieldValueMarkup(change.key, change.old) + '</span> → <span class="new">' + fieldValueMarkup(change.key, change.value) + '</span></li>';
+          }).join('') + '</ul>'
+        : '') +
+      '<div class="match-actions">' +
+        (flow.match.hard ? '' : '<button type="button" class="btn btn-quiet btn-small" data-action="create-new">Create new worker</button>') +
+        '<button type="button" class="btn btn-primary btn-small" data-action="update-existing">Update existing worker ' + esc(D.fullName(worker)) + '</button>' +
+      '</div>' +
       '</div>';
   }
 
@@ -686,7 +963,8 @@
     else if (route.name === 'worker') html = workerView(route);
     else if (route.name === 'new') html = newView();
     else if (route.name === 'alerts') html = alertsView();
-    else if (route.name === 'documents') html = placeholderView('documents', 'Documents', 'A single library for every passport, visa and licence your agency holds.');
+    else if (route.name === 'documents') html = libraryView();
+    else if (route.name === 'doc') html = reviewView(route);
     else if (route.name === 'reports') html = placeholderView('reports', 'Reports', 'Monthly throughput, document turnaround and compliance reporting.');
     else if (route.name === 'settings') html = placeholderView('settings', 'Settings', 'Workspace preferences and team permissions.');
     else if (route.name === 'me') html = window.DocuFlowEmployee.render(route.sub, { workers: state.workers, toast: toast });
@@ -705,6 +983,7 @@
       new: 'Upload documents',
       alerts: 'Expiry alerts',
       documents: 'Documents',
+      doc: 'Document review',
       reports: 'Reports',
       settings: 'Settings',
       me: 'My account'
@@ -784,6 +1063,7 @@
         renderResultProgress();
       }
     }).then(function (parsed) {
+      parsed.file = file;
       finishDocument(parsed, started);
     }).catch(function (err) {
       failDocument(err);
@@ -821,6 +1101,7 @@
     flow.error = '';
     flow.step = 2;
     flow.dirty = false;
+    flow.uploads = [];
 
     const incoming = parsed.fields && parsed.fields.surname && parsed.fields.surname.value;
     const current = String(flow.fields.surname || '').trim();
@@ -842,6 +1123,22 @@
     });
 
     if (parsed.fileName) { flow.fileName = parsed.fileName; if (flow.files.indexOf(parsed.fileName) < 0) flow.files.push(parsed.fileName); }
+
+    const snap = {};
+    Object.keys(parsed.fields || {}).forEach(function (key) {
+      const field = parsed.fields[key];
+      if (field && field.value !== null && field.value !== undefined && String(field.value).trim()) snap[key] = field.value;
+    });
+    if (parsed.kind && parsed.kind !== 'unknown') {
+      flow.uploads.push({
+        file: parsed.file || null,
+        preview: parsed.preview || '',
+        kind: parsed.kind,
+        fileName: parsed.fileName || 'document',
+        fields: snap
+      });
+    }
+    flow.match = null;
 
     const filled = FIELDS.filter(function (f) { return String(flow.fields[f.key] || '').trim(); }).length;
     const highlighted = FIELDS.filter(function (f) {
@@ -920,21 +1217,89 @@
       if (target) target.focus();
       return;
     }
-    const pNo = String(flow.fields.passportNo || '').trim();
     const pesel = String(flow.fields.pesel || '').trim();
-    const dup = state.workers.find(function (w) { return (pNo && w.passportNo === pNo) || (pesel && w.pesel === pesel); });
-    if (dup) { toast(D.fullName(dup) + ' is already in records (same passport or PESEL). Nothing was saved.', 'error'); return; }
+    if (flow.fields.pesel && flow.auto.pesel && !D.peselInfo(pesel, '').checksumValid) {
+      toast('The PESEL read from the document fails its check digit. Correct it or clear the field before saving.', 'error');
+      const target = document.querySelector('[data-field="pesel"]');
+      if (target) target.focus();
+      return;
+    }
+    const pNo = String(flow.fields.passportNo || '').trim();
+    const first = String(flow.fields.firstName || '').trim().toLowerCase();
+    const last = String(flow.fields.surname || '').trim().toLowerCase();
+    const hard = state.workers.find(function (w) { return (pNo && w.passportNo === pNo) || (pesel && w.pesel === pesel); });
+    const soft = state.workers.find(function (w) {
+      return String(w.firstName || '').trim().toLowerCase() === first && String(w.surname || '').trim().toLowerCase() === last;
+    });
+    const match = hard || soft;
+    if (match) {
+      flow.match = { id: match.id, hard: !!hard };
+      render();
+      const panel = document.querySelector('[data-match]');
+      if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    createNewWorker();
+  }
+
+  function createNewWorker() {
+    const flow = state.flow;
     const worker = D.createWorker(flow.fields);
     worker.documents = flow.files.slice();
     worker.status = D.computeStatus(worker);
     state.workers.unshift(worker);
     D.saveWorkers(state.workers);
+    const done = storeUploads(worker);
     state.flow = freshFlow();
     state.workersQuery = '';
     state.workersStatus = 'All';
     toast('Worker saved to records');
-    navigate('#/dashboard');
-    render();
+    done.then(function () {
+      navigate('#/workers/' + encodeURIComponent(worker.id));
+      render();
+    });
+  }
+
+  function updateExistingWorker() {
+    const flow = state.flow;
+    if (!flow.match) return;
+    const index = state.workers.findIndex(function (w) { return w.id === flow.match.id; });
+    if (index < 0) return;
+    const worker = state.workers[index];
+    const oldPesel = String(worker.pesel || '');
+    const changes = changedFields(worker, flow.fields);
+    changes.forEach(function (change) { worker[change.key] = change.value; });
+    worker.documents = worker.documents || [];
+    flow.files.forEach(function (name) { if (worker.documents.indexOf(name) < 0) worker.documents.push(name); });
+    worker.status = D.computeStatus(worker);
+    D.saveWorkers(state.workers);
+    const done = storeUploads(worker);
+    const name = D.fullName(worker);
+    const newPesel = String(worker.pesel || '');
+    state.flow = freshFlow();
+    state.workersQuery = '';
+    state.workersStatus = 'All';
+    done.then(function () {
+      if (newPesel && newPesel !== oldPesel) toast(name + ' updated · PESEL ' + oldPesel + ' → ' + newPesel);
+      else toast(name + ' updated · ' + changes.length + ' field' + (changes.length === 1 ? '' : 's') + ' changed');
+      navigate('#/workers/' + encodeURIComponent(worker.id));
+      render();
+    });
+  }
+
+  function storeUploads(worker) {
+    const uploads = state.flow.uploads.slice();
+    return Promise.all(uploads.map(function (upload) {
+      return S.add({
+        workerId: worker.id,
+        kind: upload.kind,
+        fileName: upload.fileName,
+        uploadedBy: 'recruiter',
+        fields: upload.fields,
+        status: 'Verified',
+        reviewedAt: new Date().toISOString()
+      }, upload.file, upload.preview);
+    }));
   }
 
   function saveWorkerEdit() {
@@ -1017,6 +1382,23 @@
       saveDraft();
     } else if (action === 'confirm-worker') {
       confirmNewWorker();
+    } else if (action === 'update-existing') {
+      updateExistingWorker();
+    } else if (action === 'create-new') {
+      createNewWorker();
+    } else if (action === 'doc-status') {
+      state.docStatus = actionEl.dataset.value;
+      render();
+    } else if (action === 'zoom') {
+      const value = actionEl.dataset.value;
+      if (value === 'fit') state.zoom = 100;
+      else state.zoom = Math.max(50, Math.min(300, state.zoom + (value === 'in' ? 25 : -25)));
+      const img = document.querySelector('[data-zoom-img]');
+      if (img) img.style.width = state.zoom + '%';
+    } else if (action === 'verify-doc') {
+      verifyDocument(actionEl.dataset.id);
+    } else if (action === 'reject-doc') {
+      rejectDocument(actionEl.dataset.id);
     } else if (action === 'go-new') {
       navigate('#/new');
     } else if (action === 'go-workers') {
@@ -1026,6 +1408,7 @@
     } else if (action === 'reset-demo') {
       if (window.confirm('Reset the demo? The 12 fictional workers will be restored and any added records removed.')) {
         try { localStorage.removeItem(D.STORE_KEY); } catch (err) { /* ignore */ }
+        S.clear();
         state.workers = D.loadWorkers();
         state.flow = freshFlow();
         state.editing = false;
@@ -1038,6 +1421,22 @@
   });
 
   document.addEventListener('input', function (event) {
+    const docsSearch = event.target.closest('[data-search="docs"]');
+    if (docsSearch) {
+      state.docQuery = docsSearch.value;
+      const results = document.getElementById('docs-results');
+      if (results) results.innerHTML = docsResults(filteredDocs(S.all()));
+      return;
+    }
+
+    const docType = event.target.closest('[data-filter="doc-type"]');
+    if (docType) {
+      state.docType = docType.value;
+      const results = document.getElementById('docs-results');
+      if (results) results.innerHTML = docsResults(filteredDocs(S.all()));
+      return;
+    }
+
     const workersSearch = event.target.closest('[data-search="workers"]');
     if (workersSearch) {
       state.workersQuery = workersSearch.value;
@@ -1074,6 +1473,12 @@
       state.workerDraft[key] = workerField.value;
       if (key === 'pesel') updatePeselHintFor(workerField, state.workerDraft.dob);
     }
+
+    if (state.flow.match) {
+      state.flow.match = null;
+      const panel = document.querySelector('[data-match]');
+      if (panel) panel.remove();
+    }
   });
 
   document.addEventListener('submit', function (event) {
@@ -1107,4 +1512,5 @@
     try { history.replaceState(null, '', '#/dashboard'); } catch (err) { location.hash = '#/dashboard'; }
   }
   render();
+  S.init().then(render);
 })();

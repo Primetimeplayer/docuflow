@@ -263,12 +263,12 @@
       field: 'p:palletExpiry', icon: 'shield', hint: 'renew it at UDT',
       noOcr: true, expected: 'pallet truck certificate'
     });
-    list.push({ id: 'peselDoc', title: 'PESEL number assignment', sub: 'Confirmation from the city office', icon: 'user', noExpiry: true });
+    list.push({ id: 'peselDoc', title: 'PESEL number assignment', sub: 'Confirmation from the city office', icon: 'user', noExpiry: true, kind: 'pesel', field: 'pesel', expected: 'PESEL certificate' });
     list.push({ id: 'photo', title: 'ID photo', sub: 'Used for your staff badge', icon: 'user', noExpiry: true });
     list.push({ id: 'fee', title: 'Payment fee confirmation', sub: 'Work permit fee', icon: 'card', receipt: true });
 
     list.forEach(function (doc) {
-      if (doc.field) doc.date = getField(w, doc.field);
+      if (doc.field && !doc.noExpiry) doc.date = getField(w, doc.field);
     });
     return list;
   }
@@ -320,6 +320,25 @@
       days: days,
       boxTone: needs ? tone : ''
     };
+  }
+
+  function latestReview(w, doc) {
+    if (!window.DocuFlowStore) return null;
+    const records = window.DocuFlowStore.forWorker(w.id).filter(function (d) {
+      return d.slot === doc.id && d.uploadedBy === 'employee';
+    });
+    return records.length ? records[0] : null;
+  }
+
+  function reviewMarkup(w, doc) {
+    const rec = latestReview(w, doc);
+    if (!rec) return '';
+    if (rec.status === 'Awaiting review') {
+      return '<p class="emp-review is-wait">Sent for review · ' + D.formatDate(rec.uploadedAt.slice(0, 10)) + '</p>';
+    }
+    if (rec.status === 'Verified') return '<p class="emp-review is-ok">Verified by your coordinator</p>';
+    if (rec.status === 'Rejected') return '<p class="emp-review is-bad">Rejected: ' + esc(rec.reason || 'no reason given') + '. Please upload it again.</p>';
+    return '';
   }
 
   function needingAction(w) {
@@ -544,7 +563,7 @@
       const state = docState(doc);
       const uploading = busyDoc === doc.id;
       const actions = [];
-      if (doc.upload !== false && !doc.noExpiry && !doc.receipt) {
+      if (doc.upload !== false && (!doc.noExpiry || doc.kind === 'pesel') && !doc.receipt) {
         const primary = state.needs ? 'btn btn-primary' : 'btn';
         actions.push('<button type="button" class="' + primary + ' btn-small" data-emp="upload" data-doc="' + doc.id + '"' + (busyDoc ? ' disabled' : '') + '>' +
           (uploading ? 'Reading… ' + Math.round(busyPct * 100) + '%' : 'Upload new version') + '</button>');
@@ -557,6 +576,7 @@
         (doc.chip ? '<span class="chip chip-blue">' + esc(doc.chip) + '</span>' : '') + '</div>' +
         pill(state.pill, state.pillClass) + '</div>' +
         '<div class="emp-exp' + (state.boxTone ? ' ' + state.boxTone : '') + '"><span>' + state.box + '</span><small>' + esc(state.small) + '</small></div>' +
+        reviewMarkup(w, doc) +
         '<div class="emp-actions">' + actions.join('') + '</div>' +
         '</article>';
     }).join('');
@@ -586,6 +606,31 @@
         meta: ''
       });
     });
+
+    if (window.DocuFlowStore) {
+      window.DocuFlowStore.forWorker(w.id).forEach(function (rec) {
+        if (rec.uploadedBy !== 'employee' || rec.status === 'Awaiting review') return;
+        if (rec.status === 'Verified') {
+          notes.push({
+            id: 'stored:' + rec.id + ':verified',
+            icon: 'check',
+            tone: 'green',
+            title: 'Your ' + rec.type + ' was verified',
+            body: 'Your coordinator checked it and updated your record.',
+            meta: ''
+          });
+        } else if (rec.status === 'Rejected') {
+          notes.push({
+            id: 'stored:' + rec.id + ':rejected',
+            icon: 'warn',
+            tone: 'red',
+            title: 'Your ' + rec.type + ' was rejected',
+            body: 'Reason: ' + (rec.reason || 'no reason given') + '. Please upload it again.',
+            link: true
+          });
+        }
+      });
+    }
 
     needingAction(w).forEach(function (doc) {
       const state = docState(doc);
@@ -754,14 +799,28 @@
       ctx.toast(message, 'error');
     }
 
+    function sendForReview(fields, kind, preview, warning) {
+      return window.DocuFlowStore.add({
+        workerId: w.id,
+        slot: doc.id,
+        kind: kind,
+        type: kind ? '' : doc.title,
+        fileName: file.name || 'document',
+        uploadedBy: 'employee',
+        fields: fields || {},
+        warning: warning || ''
+      }, file, preview).then(function () {
+        addSessionEvent('You sent your new ' + doc.title.toLowerCase() + ' for review', 'Your coordinator will check it before your record changes');
+        busyDoc = null;
+        busyPct = 0;
+        rerender();
+        if (warning) ctx.toast('Sent for review. ' + warning, 'error');
+        else ctx.toast('Sent for review. Your coordinator will check it.');
+      });
+    }
+
     if (doc.noOcr) {
-      const iso = D.isoInDays(365);
-      setField(w, doc.field, iso);
-      addFileName(w, file.name);
-      addSessionEvent('You uploaded a new ' + doc.title.toLowerCase(), 'Valid until ' + D.formatDate(iso) + ' · waiting for your coordinator to check');
-      busyDoc = null;
-      busyPct = 0;
-      saveAndToast(w, ctx, doc.title + ' uploaded. Your coordinator will check it.');
+      sendForReview({ [doc.field]: D.isoInDays(365) }, '', '', '');
       return;
     }
 
@@ -792,23 +851,30 @@
         ? ['passportNo', 'passportExpiry']
         : doc.id === 'residence'
           ? ['residenceCardExpiry']
-          : ['forkliftLicenceNo', 'licenceExpiry'];
-      let expiry = '';
+          : doc.id === 'peselDoc'
+            ? ['pesel', 'sex']
+            : ['forkliftLicenceNo', 'licenceExpiry'];
+      const snap = {};
       keys.forEach(function (key) {
         const field = fields[key];
         const value = field && field.value ? String(field.value).trim() : '';
-        if (!value) return;
-        setField(w, key, value);
-        if (/Expiry$/.test(key)) expiry = value;
+        if (value) snap[key] = value;
       });
-      addFileName(w, result.fileName || file.name);
-      addSessionEvent(
-        'You uploaded a new ' + doc.title.toLowerCase(),
-        (expiry ? 'Valid until ' + D.formatDate(expiry) + ' · ' : '') + 'waiting for your coordinator to check'
-      );
-      busyDoc = null;
-      busyPct = 0;
-      saveAndToast(w, ctx, doc.title + ' updated.' + (expiry ? ' Valid until ' + D.formatDate(expiry) + '.' : '') + ' Your coordinator will check it.');
+      let warning = '';
+      if (doc.id === 'peselDoc') {
+        const number = snap.pesel || '';
+        const info = number ? D.peselInfo(number, '') : null;
+        if (!number || !info || !info.checksumValid) {
+          fail("We couldn't read a valid PESEL on this document. Try a sharper photo. Nothing was sent.");
+          return;
+        }
+        if (!D.peselInfo(number, w.dob).dobMatches) {
+          warning = 'This PESEL gives a birth date of ' + D.formatDate(info.parsedDob) + ', but your record says ' + D.formatDate(w.dob) + '.';
+        } else if (snap.sex && (Number(number[9]) % 2 === 0 ? 'F' : 'M') !== snap.sex) {
+          warning = "This PESEL doesn't match the sex shown on the document.";
+        }
+      }
+      sendForReview(snap, result.kind, result.preview, warning);
     }).catch(function (err) {
       fail(err && err.message ? err.message : 'That file could not be read. Try a clearer photo.');
     });
