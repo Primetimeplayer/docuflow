@@ -5,6 +5,7 @@
   const D = window.DocuFlowData;
   const OCR = window.DocuFlowOCR;
   const S = window.DocuFlowStore;
+  const SET = window.DocuFlowSettings;
 
   const ICONS = {
     dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>',
@@ -117,6 +118,7 @@
     const parts = raw.split('/').filter(Boolean);
     if (parts[0] === 'workers' && parts[1]) return { name: 'worker', id: decodeURIComponent(parts[1]) };
     if (parts[0] === 'documents' && parts[1]) return { name: 'doc', id: decodeURIComponent(parts[1]) };
+    if (parts[0] === 'settings') return { name: 'settings', tab: parts[1] || 'organisation' };
     if (parts[0] === 'me') return { name: 'me', sub: ['details','documents','notifications'].indexOf(parts[1]) >= 0 ? parts[1] : 'home' };
     if (['dashboard', 'workers', 'new', 'alerts', 'documents', 'reports', 'settings'].indexOf(parts[0]) >= 0) {
       return { name: parts[0] };
@@ -198,11 +200,19 @@
       '</div>';
   }
 
+  function loadingState(text) {
+    return '<div class="empty" aria-busy="true"><p class="empty-title">' + esc(text) + '</p></div>';
+  }
+
+  function uploadButton() {
+    return SET.can('edit') ? '<a class="btn btn-primary" href="#/new"><span class="plus">+</span> ' + esc(SET.t('Upload documents')) + '</a>' : '';
+  }
+
   function pageHead(eyebrow, title, lede, actions) {
     return '<header class="page-head">' +
       '<div class="page-head-main">' +
-      (eyebrow ? '<p class="eyebrow">' + esc(eyebrow) + '</p>' : '') +
-      '<h1>' + title + '</h1>' +
+      (eyebrow ? '<p class="eyebrow">' + esc(SET.t(eyebrow)) + '</p>' : '') +
+      '<h1>' + SET.t(title) + '</h1>' +
       (lede ? '<p class="lede">' + lede + '</p>' : '') +
       '</div>' +
       (actions ? '<div class="page-actions">' + actions + '</div>' : '') +
@@ -228,18 +238,22 @@
   /* ------------------------------------------------------------ chrome */
 
   function updateChrome() {
-    const near = D.expiryItems(state.workers).filter(function (i) { return i.days <= 30; });
+    const days = SET.expiryDays();
+    const near = D.expiryItems(state.workers).filter(function (i) { return i.days <= days; });
     const badge = document.getElementById('nav-alert-count');
     if (badge) {
       badge.textContent = near.length ? String(near.length) : '';
-      badge.hidden = near.length === 0;
+      badge.hidden = near.length === 0 || !SET.get('notify.expiry.app');
     }
     const docsBadge = document.getElementById('nav-doc-count');
     if (docsBadge) {
       const pending = S.all().filter(function (doc) { return doc.status === 'Awaiting review'; }).length;
       docsBadge.textContent = pending ? String(pending) : '';
-      docsBadge.hidden = pending === 0;
+      docsBadge.hidden = pending === 0 || !SET.get('notify.review.app');
     }
+    const role = document.getElementById('sidebar-role');
+    if (role) role.textContent = SET.role() + ' · ' + SET.get('org.short');
+    SET.apply();
   }
 
   function markNav(route) {
@@ -263,15 +277,16 @@
     const docs = workers.reduce(function (sum, w) { return sum + (w.documents ? w.documents.length : 0); }, 0);
     const minutes = docs * 6;
     const items = D.expiryItems(workers);
-    const near = items.filter(function (i) { return i.days <= 30; });
-    const breakdown = D.expiryBreakdown(items, 30);
+    const days = SET.expiryDays();
+    const near = items.filter(function (i) { return i.days <= days; });
+    const breakdown = D.expiryBreakdown(items, days);
     const recent = workers.slice(0, 6);
 
     return pageHead(
       'Overview',
       (new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening') + ', Anna',
       'Here is what needs your attention across the agency today.',
-      '<a class="btn btn-primary" href="#/new"><span class="plus">+</span> Upload documents</a>'
+      uploadButton()
     ) +
       '<p class="page-date">' + esc(new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date())) + '</p>' +
       '<form class="search search-dashboard" data-form="dashboard-search" role="search">' +
@@ -280,10 +295,10 @@
         '<button class="btn btn-quiet btn-small search-submit" type="submit">Search</button>' +
       '</form>' +
       '<section class="stats" aria-label="Key figures">' +
-        statCard('Active workers', String(workers.length), 'All records in this demo', icon('workers')) +
+        statCard('Active workers', String(workers.length), 'Placed by ' + SET.get('org.short'), icon('workers')) +
         statCard('Documents processed', String(docs), 'Across all worker records', icon('docs')) +
         statCard('Hours saved this month', D.formatMinutes(minutes), docs + ' documents × 6 min', icon('clock')) +
-        statCard('Expiring in 30 days', String(near.length), breakdown || 'Nothing expiring in the next 30 days', icon('bell'), near.length ? 'attention' : '') +
+        statCard('Expiring in ' + days + ' days', String(near.length), breakdown || 'Nothing expiring in the next ' + days + ' days', icon('bell'), near.length ? 'attention' : '') +
       '</section>' +
       '<div class="dash-grid">' +
         '<section class="card">' +
@@ -317,7 +332,7 @@
       list.map(function (w) {
         return '<tr data-href="#/workers/' + encodeURIComponent(w.id) + '" tabindex="0">' +
           '<td><div class="person">' + avatar(w) + '<div class="person-text"><span class="person-name">' + esc(D.fullName(w)) + '</span><span class="person-meta">' + esc(w.nationality) + '</span></div></div></td>' +
-          '<td><span class="mono">' + esc(w.passportNo || '—') + '</span></td>' +
+          '<td><span class="mono">' + esc(w.passportNo ? SET.mask('passportNo', w.passportNo) : '—') + '</span></td>' +
           '<td><span class="mono">' + esc(w.forkliftLicenceNo || '—') + '</span></td>' +
           '<td>' + statusPill(w.status) + '</td>' +
           '</tr>';
@@ -327,7 +342,8 @@
 
   function alertItem(item) {
     const tone = D.toneForDays(item.days);
-    const detail = [item.type, item.number].filter(Boolean).join(' · ');
+    const number = item.field === 'passportExpiry' ? SET.mask('passportNo', item.number) : item.number;
+    const detail = [item.type, number].filter(Boolean).join(' · ');
     return '<li class="alert-item-li">' +
       '<a class="alert-item" href="#/workers/' + encodeURIComponent(item.workerId) + '">' +
         '<span class="alert-dot ' + toneClass(tone) + '"></span>' +
@@ -351,7 +367,7 @@
         esc(status) + '<span class="chip-count">' + counts[status] + '</span></button>';
     }).join('');
 
-    return pageHead('Records', 'Workers', 'Search by name, PESEL or passport number. Open a record to review its documents.', '<a class="btn btn-primary" href="#/new"><span class="plus">+</span> Upload documents</a>') +
+    return pageHead('Records', 'Workers', 'Search by name, PESEL or passport number. Open a record to review its documents.', uploadButton()) +
       '<section class="card">' +
         '<div class="table-toolbar">' +
           '<form class="search" data-form="workers-search" role="search">' +
@@ -381,8 +397,8 @@
         list.map(function (w) {
           return '<tr data-href="#/workers/' + encodeURIComponent(w.id) + '" tabindex="0">' +
             '<td><div class="person">' + avatar(w) + '<div class="person-text"><span class="person-name">' + esc(D.fullName(w)) + '</span><span class="person-meta">' + esc(w.nationality) + ' · ' + esc(w.email || 'No email') + '</span></div></div></td>' +
-            '<td><span class="mono">' + esc(w.pesel || '—') + '</span></td>' +
-            '<td><span class="mono">' + esc(w.passportNo || '—') + '</span></td>' +
+            '<td><span class="mono">' + esc(w.pesel ? SET.mask('pesel', w.pesel) : '—') + '</span></td>' +
+            '<td><span class="mono">' + esc(w.passportNo ? SET.mask('passportNo', w.passportNo) : '—') + '</span></td>' +
             '<td><span class="mono">' + esc(w.forkliftLicenceNo || '—') + '</span></td>' +
             '<td>' + statusPill(w.status) + '</td>' +
             '</tr>';
@@ -401,7 +417,7 @@
   function workerView(route) {
     const worker = state.workers.find(function (w) { return w.id === route.id; });
     if (!worker) {
-      return pageHead('Records', 'Worker not found', 'That record is not in this demo.', '<a class="btn btn-quiet" href="#/workers">Back to workers</a>') +
+      return pageHead('Records', 'Worker not found', 'That record isn’t in DocuFlow.', '<a class="btn btn-quiet" href="#/workers">Back to workers</a>') +
         '<section class="card">' + emptyState('This worker is not here', 'The record may have been removed, or the link may be incorrect.', 'go-workers', 'Back to workers') + '</section>';
     }
     if (state.editing && (!state.workerDraft || state.workerDraft.id !== worker.id)) {
@@ -409,16 +425,18 @@
     }
     const draft = state.editing ? state.workerDraft : worker;
 
-    const actions = state.editing
-      ? '<button type="button" class="btn btn-quiet" data-action="cancel-edit">Cancel</button><button type="button" class="btn btn-primary" data-action="save-worker">Save</button>'
-      : '<button type="button" class="btn btn-quiet" data-action="edit-worker">Edit</button>';
+    const actions = !SET.can('edit')
+      ? '<span class="chip chip-neutral" data-view-only>View only · ' + esc(SET.role()) + '</span>'
+      : state.editing
+        ? '<button type="button" class="btn btn-quiet" data-action="cancel-edit">Cancel</button><button type="button" class="btn btn-primary" data-action="save-worker">Save</button>'
+        : '<button type="button" class="btn btn-quiet" data-action="edit-worker">Edit</button>';
 
     return '<a class="back-link" href="#/workers">' + ICONS.back + ' All workers</a>' +
       '<header class="page-head worker-head">' +
         '<div class="page-head-main worker-title">' +
           '<span class="avatar avatar-lg">' + esc(D.initials(worker.firstName, worker.surname)) + '</span>' +
           '<div><div class="worker-name-row"><h1>' + esc(D.fullName(worker)) + '</h1>' + statusPill(worker.status) + '</div>' +
-          '<p class="lede">' + esc(worker.nationality) + ' · Passport ' + esc(worker.passportNo || 'not recorded') + ' · ' + (worker.documents ? worker.documents.length : 0) + ' document' + ((worker.documents ? worker.documents.length : 0) === 1 ? '' : 's') + '</p></div>' +
+          '<p class="lede">' + esc(worker.nationality) + ' · Passport ' + esc(worker.passportNo ? SET.mask('passportNo', worker.passportNo) : 'not recorded') + ' · ' + (worker.documents ? worker.documents.length : 0) + ' document' + ((worker.documents ? worker.documents.length : 0) === 1 ? '' : 's') + '</p></div>' +
         '</div>' +
         '<div class="page-actions">' + actions + '</div>' +
       '</header>' +
@@ -428,17 +446,20 @@
           '<div class="form-grid two">' +
             FIELDS.map(function (f) {
               const value = draft[f.key] || '';
-              const hint = f.key === 'pesel' ? peselHintMarkup(value, draft.dob) : '';
+              const masked = !state.editing && SET.mask(f.key, value) !== value;
+              const hint = f.key === 'pesel' && !masked ? peselHintMarkup(value, draft.dob) : '';
               const dateText = !state.editing && f.type === 'date';
+              const shown = masked ? SET.mask(f.key, value) : dateText ? (value ? D.formatDate(value) : '') : value;
               return '<div class="field" data-worker-wrap="' + f.key + '">' +
                 '<label for="w-' + f.key + '">' + esc(f.label) + '</label>' +
-                '<input id="w-' + f.key + '" data-worker-field="' + f.key + '" type="' + (dateText ? 'text' : (f.type || 'text')) + '" value="' + esc(dateText ? (value ? D.formatDate(value) : '') : value) + '"' +
+                '<input id="w-' + f.key + '" data-worker-field="' + f.key + '" type="' + (masked || dateText ? 'text' : (f.type || 'text')) + '" value="' + esc(shown) + '"' +
                 (f.inputmode ? ' inputmode="' + f.inputmode + '"' : '') + (f.maxlength ? ' maxlength="' + f.maxlength + '"' : '') +
                 (state.editing ? '' : ' disabled') + ' placeholder="Not recorded">' +
                 hint +
                 '</div>';
             }).join('') +
           '</div>' +
+          '<p class="form-footnote" data-retention>Kept for ' + SET.get('privacy.retentionYears') + ' years after ' + esc(worker.firstName || 'this worker') + ' stops working with ' + esc(SET.get('org.short')) + ' (RODO) · <a class="text-link" href="#/settings/privacy">Retention settings</a></p>' +
         '</section>' +
         '<div class="detail-side">' +
           documentsCard(worker) +
@@ -492,7 +513,7 @@
           }).join('') +
           slots.map(function (slot) {
             const hist = S.history(worker.id, slot);
-            const html = S.historyHtml(worker.id, slot, { review: true });
+            const html = S.historyHtml(worker.id, slot, { review: true, restore: SET.can('restore') });
             if (!html) return '';
             return '<li class="hist-group"><p class="hist-title">' + esc(hist[0].type) + ' · History</p>' + html + '</li>';
           }).join('') +
@@ -500,7 +521,7 @@
             return '<li class="doc-item">' +
               '<span class="doc-icon">' + ICONS.file + '</span>' +
               '<span class="doc-text"><span class="doc-name">' + esc(name) + '</span><span class="doc-meta">' + esc(docLabel(name)) + '</span></span>' +
-              '<span class="chip chip-neutral chip-tiny">Demo file</span>' +
+              '<span class="chip chip-neutral chip-tiny" title="Listed on the record. No scanned copy is stored yet.">Record only</span>' +
               '</li>';
           }).join('') +
           '</ul>'
@@ -551,6 +572,7 @@
   }
 
   function docsResults(list) {
+    if (!S.isReady()) return loadingState('Loading documents…');
     if (!S.all().length) {
       return emptyState('No documents yet', 'Documents appear here when a worker or recruiter uploads one.', '', '');
     }
@@ -579,10 +601,11 @@
 
   function reviewView(route) {
     const doc = S.get(route.id);
+    if (!doc && !S.isReady()) return '<section class="card">' + loadingState('Loading document…') + '</section>';
     if (!doc) {
       return '<a class="back-link" href="#/documents">' + ICONS.back + ' All documents</a>' +
         pageHead('Records', 'Document not found', 'That document is not in this browser’s store.', '<a class="btn btn-quiet" href="#/documents">Back to documents</a>') +
-        '<section class="card">' + emptyState('This document is not here', 'It may have been cleared with the demo data.', '', '') + '</section>';
+        '<section class="card">' + emptyState('This document is not here', 'It may have been removed when the demo data was reset.', '', '') + '</section>';
     }
     const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
     const src = S.url(doc);
@@ -622,16 +645,18 @@
               : '<div class="table-wrap"><table class="table table-review table-readonly"><thead><tr><th>Field</th><th>On document</th></tr></thead><tbody>' + rows + '</tbody></table></div>')
             : '<div class="empty empty-small"><p class="empty-title">No fields were read</p><p class="empty-text">Check the preview before you apply it.</p></div>') +
           (pending
-            ? '<label class="review-reject">Reason if you reject<textarea id="reject-reason" rows="2"></textarea></label>' +
-              '<div class="form-actions">' +
-                '<button type="button" class="btn btn-quiet" data-action="reject-doc" data-id="' + esc(doc.id) + '">Reject</button>' +
-                '<button type="button" class="btn btn-primary" data-action="verify-doc" data-id="' + esc(doc.id) + '">Verify &amp; apply</button>' +
-              '</div>'
+            ? (SET.can('verify')
+              ? '<label class="review-reject">Reason if you reject<textarea id="reject-reason" rows="2"></textarea></label>' +
+                '<div class="form-actions">' +
+                  '<button type="button" class="btn btn-quiet" data-action="reject-doc" data-id="' + esc(doc.id) + '">Reject</button>' +
+                  '<button type="button" class="btn btn-primary" data-action="verify-doc" data-id="' + esc(doc.id) + '">Verify &amp; apply</button>' +
+                '</div>'
+              : '<div class="notice notice-warn" data-no-verify><strong>Viewing as ' + esc(SET.role()) + '</strong><span>Only Admins and Recruiters can verify or reject documents.</span></div>')
             : '<div class="notice ' + (doc.status === 'Rejected' ? 'notice-warn' : 'notice-ok') + '"><strong data-audit>' + esc(S.auditLine(doc)) + '</strong>' +
               (doc.status === 'Verified' ? '<span>' + (currentVersion && currentVersion.id === doc.id ? 'Current version' : 'Older version, kept for reference') + '</span>' : '') +
               (S.restoreLine(doc) ? '<span data-restored>' + esc(S.restoreLine(doc)) + '</span>' : '') +
               (doc.reason ? '<span>Reason: ' + esc(doc.reason) + '</span>' : '') + '</div>' +
-              (doc.status === 'Verified' && !(currentVersion && currentVersion.id === doc.id)
+              (doc.status === 'Verified' && SET.can('restore') && !(currentVersion && currentVersion.id === doc.id)
                 ? '<div class="form-actions"><button type="button" class="btn btn-primary" data-action="restore-doc" data-id="' + esc(doc.id) + '">Restore this version</button></div>'
                 : '')) +
         '</section>' +
@@ -663,6 +688,7 @@
       const date = REVIEW_DATES.test(key);
       const show = function (value) {
         if (!value) return '—';
+        if (SET.mask(key, value) !== value) return esc(SET.mask(key, value));
         return esc(date ? D.formatDate(value) : value);
       };
       const changed = !!next && next !== current;
@@ -679,7 +705,7 @@
     return Object.keys(read).map(function (key) {
       const value = String(read[key] === null || read[key] === undefined ? '' : read[key]).trim();
       if (!value) return '';
-      const shown = REVIEW_DATES.test(key) ? D.formatDate(value) : value;
+      const shown = SET.mask(key, value) !== value ? SET.mask(key, value) : REVIEW_DATES.test(key) ? D.formatDate(value) : value;
       return '<tr><td>' + esc(reviewLabel(key)) + '</td><td>' + esc(shown) + '</td></tr>';
     }).join('');
   }
@@ -715,6 +741,7 @@
   }
 
   function restoreDocument(id) {
+    if (!SET.can('restore')) { toast('Your role can’t restore older versions.', 'error'); return; }
     const doc = S.get(id);
     if (!doc) return;
     if (doc.status !== 'Verified') { toast('Only verified versions can be restored.', 'error'); return; }
@@ -743,6 +770,7 @@
   function verifyDocument(id) {
     const doc = S.get(id);
     if (!doc) return;
+    if (!SET.can('verify')) { toast('Your role can’t verify or reject documents.', 'error'); return; }
     const worker = state.workers.find(function (w) { return w.id === doc.workerId; });
     if (!worker) { toast('That worker is no longer in records.', 'error'); return; }
     applyDocFields(worker, doc);
@@ -757,6 +785,7 @@
   }
 
   function rejectDocument(id) {
+    if (!SET.can('verify')) { toast('Your role can’t verify or reject documents.', 'error'); return; }
     const reasonEl = document.getElementById('reject-reason');
     const reason = reasonEl ? String(reasonEl.value || '').trim().replace(/\.+$/, '') : '';
     if (!reason) {
@@ -794,6 +823,10 @@
   /* ------------------------------------------------------------- new flow */
 
   function newView() {
+    if (!SET.can('edit')) {
+      return pageHead('New worker', 'Upload documents', 'Add a worker by reading their passport, licence or residence card.', '') +
+        '<section class="card">' + emptyState('Viewers can’t add workers', 'Switch to Admin or Recruiter under Settings → Users & roles to upload documents.', 'go-workers', 'Back to workers') + '</section>';
+    }
     const flow = state.flow;
     const step = flow.step;
     const steps = [
@@ -815,7 +848,7 @@
       '</ol>' +
       '<div class="new-grid">' +
         '<section class="card upload-card">' +
-          '<div class="card-head"><div><h2>Document</h2><p class="card-sub">JPG, PNG or PDF · first page only</p></div><span class="chip chip-neutral">Read locally</span></div>' +
+          '<div class="card-head"><div><h2>Document</h2><p class="card-sub">' + esc(SET.typesLabel()) + ' · up to ' + esc(SET.get('ocr.maxMb')) + ' MB</p></div><span class="chip chip-neutral">Read locally</span></div>' +
           uploadMarkup() +
           (flow.busy ? progressMarkup(flow) : '') +
           (flow.error ? '<div class="notice notice-error"><strong>Could not read that document</strong><span>' + esc(flow.error) + '</span></div>' : '') +
@@ -884,7 +917,7 @@
     let cls = '';
     let tag = '';
     if (meta) {
-      if (meta.confidence < 80) {
+      if (meta.confidence < SET.get('ocr.threshold')) {
         cls = ' check';
         tag = '<span class="source-tag tag-check">Check · ' + Math.round(meta.confidence) + '%</span>';
       } else {
@@ -911,15 +944,15 @@
           (flow.detection ? '<span class="pill-detect">' + esc(flow.detection) + '</span>' : '<span class="chip chip-neutral">' + (flow.busy ? 'Reading document…' : 'Document loaded') + '</span>') +
           '<button type="button" class="btn btn-quiet btn-small" data-action="choose-file">Replace file</button>' +
         '</div>' +
-        '<input type="file" id="file-input" class="sr-only" aria-label="Choose a document file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">' +
+        '<input type="file" id="file-input" class="sr-only" aria-label="Choose a document file" accept="' + esc(SET.accept()) + '">' +
         '</div>';
     }
-    return '<div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Upload a document">' +
+    return '<div class="dropzone" id="dropzone">' +
       '<span class="dropzone-icon">' + ICONS.upload + '</span>' +
       '<p class="dropzone-title">Drop a document here</p>' +
       '<p class="dropzone-text">or <button type="button" class="link-button" data-action="choose-file">browse your files</button></p>' +
-      '<p class="dropzone-hint">JPG, PNG or PDF · first page</p>' +
-      '<input type="file" id="file-input" class="sr-only" aria-label="Choose a document file" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">' +
+      '<p class="dropzone-hint">' + esc(SET.typesLabel()) + ' · up to ' + esc(SET.get('ocr.maxMb')) + ' MB · PDF: first page</p>' +
+      '<input type="file" id="file-input" class="sr-only" aria-label="Choose a document file" accept="' + esc(SET.accept()) + '">' +
       '</div>';
   }
 
@@ -978,9 +1011,10 @@
   /* -------------------------------------------------------------- alerts */
 
   function alertsView() {
+    const days = SET.expiryDays();
     const all = D.expiryItems(state.workers);
     const filtered = state.alertFilter === 'all' ? all : all.filter(function (i) { return i.short === state.alertFilter; });
-    const near = all.filter(function (i) { return i.days <= 30; });
+    const near = all.filter(function (i) { return i.days <= days; });
     const counts = {
       all: all.length,
       passport: all.filter(function (i) { return i.short === 'passport'; }).length,
@@ -992,41 +1026,50 @@
         esc(f.label) + '<span class="chip-count">' + counts[f.key] + '</span></button>';
     }).join('');
 
-    return pageHead('Compliance', 'Expiry alerts', 'Every recorded document date, soonest first. ' + near.length + ' items need attention in the next 30 days.', '<a class="btn btn-primary" href="#/new"><span class="plus">+</span> Upload documents</a>') +
+    const who = { coordinator: 'coordinators', admins: 'admins', worker: 'workers' };
+    const sendTo = SET.get('expiry.notify').map(function (k) { return who[k]; }).filter(Boolean);
+
+    return pageHead('Compliance', 'Expiry alerts', 'Every recorded document date, soonest first. ' + near.length + ' items need attention in the next ' + days + ' days.', uploadButton()) +
       '<section class="card">' +
         '<div class="table-toolbar"><div class="chips" role="group" aria-label="Filter alerts">' + chips + '</div></div>' +
         (filtered.length
           ? '<ul class="alert-list">' + filtered.map(alertItem).join('') + '</ul>'
           : '<div class="empty"><span class="empty-icon">' + ICONS.check + '</span><p class="empty-title">No alerts in this category</p><p class="empty-text">Nothing recorded here is expiring. Try another filter.</p></div>') +
       '</section>' +
-      '<p class="legend"><span class="alert-dot tone-red"></span> Under 14 days <span class="alert-dot tone-amber"></span> Under 30 days <span class="alert-dot tone-green"></span> More than 30 days</p>';
+      '<p class="legend"><span class="alert-dot tone-red"></span> Under 14 days <span class="alert-dot tone-amber"></span> Under 30 days <span class="alert-dot tone-green"></span> More than 30 days</p>' +
+      '<p class="legend" data-reminder-line>' + (sendTo.length ? 'Reminders go to ' + sendTo.join(', ') + ' ' + days + ' days before expiry' : 'Nobody is set to receive expiry reminders') + ' · <a class="text-link" href="#/settings/expiry">Change</a></p>';
   }
 
   /* -------------------------------------------------------- simple pages */
 
-  function placeholderView(page, title, copy) {
-    return pageHead('Demo', title, copy, '<a class="btn btn-quiet" href="#/workers">Back to workers</a>') +
-      '<section class="card placeholder-card">' +
-        '<span class="placeholder-icon">' + (page === 'settings' ? ICONS.settings : page === 'reports' ? ICONS.reports : ICONS.documents) + '</span>' +
-        '<h2>' + esc(title) + ' is outside this demo</h2>' +
-        '<p>DocuFlow here focuses on worker records, document auto-fill and expiry alerts. The sidebar keeps the full product shape so the workflow is easy to picture.</p>' +
-        (page === 'settings'
-          ? '<div class="placeholder-actions"><button type="button" class="btn btn-quiet" data-action="reset-demo">Reset demo data</button></div><p class="form-footnote">Restores the 12 fictional workers and clears this browser’s demo storage.</p>'
-          : '<a class="text-link" href="#/workers">Review worker records →</a>') +
-      '</section>';
-  }
-
   function notFoundView() {
-    return pageHead('404', 'Page not found', 'That route does not exist in this demo.', '<a class="btn btn-primary" href="#/dashboard">Back to dashboard</a>') +
+    return pageHead('404', 'Page not found', 'That page doesn’t exist in DocuFlow.', '<a class="btn btn-primary" href="#/dashboard">Back to dashboard</a>') +
       '<section class="card">' + emptyState('Nothing at this address', 'Use the sidebar, or return to the dashboard to keep exploring.', 'go-dashboard', 'Go to dashboard') + '</section>';
   }
 
   /* --------------------------------------------------------------- render */
 
-  function render() {
+  function pageTitle(route) {
+    const t = SET.t;
+    if (route.name === 'worker') {
+      const worker = state.workers.find(function (w) { return w.id === route.id; });
+      return (worker ? D.fullName(worker) : t('Worker record')) + ' · ' + t('Workers');
+    }
+    if (route.name === 'me') {
+      return t({ home: 'Home', details: 'My details', documents: 'My documents', notifications: 'Notifications' }[route.sub]) + ' · ' + t('My account');
+    }
+    if (route.name === 'settings') {
+      const tab = window.DocuFlowSettingsPage.TABS.find(function (x) { return x[0] === route.tab; });
+      return t(tab ? tab[1] : 'Organisation') + ' · ' + t('Settings');
+    }
+    return t({ dashboard: 'Dashboard', workers: 'Workers', new: 'Upload documents', alerts: 'Expiry alerts', documents: 'Documents', doc: 'Document review', reports: 'Reports' }[route.name] || 'Page not found');
+  }
+
+  function render(keepScroll) {
     const route = currentRoute();
     const previous = state.route;
     state.route = route;
+    state.workers.forEach(function (w) { w.status = D.computeStatus(w); });
 
     if (route.name !== 'worker') {
       state.editing = false;
@@ -1044,30 +1087,24 @@
     else if (route.name === 'alerts') html = alertsView();
     else if (route.name === 'documents') html = libraryView();
     else if (route.name === 'doc') html = reviewView(route);
-    else if (route.name === 'reports') html = window.DocuFlowReports.render({ workers: state.workers, pageHead: pageHead, rerender: render });
-    else if (route.name === 'settings') html = placeholderView('settings', 'Settings', 'Workspace preferences and team permissions.');
+    else if (route.name === 'reports') html = window.DocuFlowReports.render({ workers: state.workers, pageHead: pageHead, rerender: function () { render(true); } });
+    else if (route.name === 'settings') html = window.DocuFlowSettingsPage.render(route.tab, { workers: state.workers, pageHead: pageHead, toast: toast, rerender: function () { render(true); } });
     else if (route.name === 'me') html = window.DocuFlowEmployee.render(route.sub, { workers: state.workers, toast: toast });
     else html = notFoundView();
 
     document.body.classList.toggle('is-employee', route.name === 'me');
+    const scrollY = window.scrollY;
     view.innerHTML = html;
     markNav(route);
     updateChrome();
     closeNav();
     wirePage();
-    setTitle({
-      dashboard: 'Dashboard',
-      workers: 'Workers',
-      worker: 'Worker record',
-      new: 'Upload documents',
-      alerts: 'Expiry alerts',
-      documents: 'Documents',
-      doc: 'Document review',
-      reports: 'Reports',
-      settings: 'Settings',
-      me: 'My account'
-    }[route.name] || 'Page not found');
-    window.scrollTo(0, 0);
+    setTitle(pageTitle(route));
+    window.scrollTo(0, keepScroll ? scrollY : 0);
+    const activeTab = view.querySelector('.set-tab.is-active');
+    if (activeTab && activeTab.parentNode.scrollWidth > activeTab.parentNode.clientWidth) {
+      activeTab.parentNode.scrollLeft = activeTab.offsetLeft - 16;
+    }
   }
 
   function wirePage() {
@@ -1128,6 +1165,13 @@
 
   function startUpload(file) {
     if (state.flow.busy) return;
+    const problem = SET.checkFile(file);
+    if (problem) {
+      const input = document.getElementById('file-input');
+      if (input) input.value = '';
+      toast(problem, 'error');
+      return;
+    }
     beginDocument();
     state.flow.fileName = file.name || 'document';
     const started = performance.now();
@@ -1221,7 +1265,7 @@
 
     const filled = FIELDS.filter(function (f) { return String(flow.fields[f.key] || '').trim(); }).length;
     const highlighted = FIELDS.filter(function (f) {
-      return flow.auto[f.key] && flow.auto[f.key].confidence < 80;
+      return flow.auto[f.key] && flow.auto[f.key].confidence < SET.get('ocr.threshold');
     }).length;
 
     flow.result = {
@@ -1440,6 +1484,7 @@
       state.alertFilter = actionEl.dataset.value;
       render();
     } else if (action === 'edit-worker') {
+      if (!SET.can('edit')) return;
       const route = currentRoute();
       const worker = state.workers.find(function (w) { return w.id === route.id; });
       if (worker) {
@@ -1488,9 +1533,12 @@
     } else if (action === 'go-dashboard') {
       navigate('#/dashboard');
     } else if (action === 'reset-demo') {
-      if (window.confirm('Reset the demo? The 12 fictional workers will be restored and any added records removed.')) {
+      if (!SET.can('settings')) return;
+      if (window.confirm('Reset the demo? The 12 fictional workers are restored, stored documents are removed and the audit log is cleared. Settings are kept.')) {
         try { localStorage.removeItem(D.STORE_KEY); } catch (err) { /* ignore */ }
         S.clear();
+        SET.clearLog();
+        SET.log('Reset demo data');
         state.workers = D.loadWorkers();
         state.flow = freshFlow();
         state.editing = false;

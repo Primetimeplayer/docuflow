@@ -6,6 +6,7 @@
   const TYPES = { passport: 'Passport', residence: 'Residence card', licence: 'Forklift licence', pesel: 'PESEL certificate' };
   let db = null;
   let items = [];
+  let ready = false;
   const urls = {};
   function req(r) { return new Promise(function (res, rej) { r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; }); }
   function store(mode) { return db.transaction(STORE, mode).objectStore(STORE); }
@@ -17,6 +18,7 @@
       items = await req(store('readonly').getAll());
     } catch (err) { console.warn('DocuFlow file store unavailable', err); db = null; items = []; }
     items.sort(function (a, b) { return b.uploadedAt.localeCompare(a.uploadedAt); });
+    ready = true;
   }
   /* Preview copy: longest side max 1600 px, JPEG 0.8. */
   function makePreview(src) {
@@ -130,7 +132,7 @@
         '</span>' +
         '<span class="hist-pill">' + esc(pill) + '</span>' +
         '<span class="hist-actions">' + view +
-          (review && !rejected && rec.status === 'Verified' && !currentVersion
+          (review && opts.restore !== false && !rejected && rec.status === 'Verified' && !currentVersion
             ? '<button type="button" class="btn btn-quiet btn-small" data-action="restore-doc" data-id="' + esc(rec.id) + '">Restore this version</button>'
             : '') +
           '<button type="button" class="btn btn-quiet btn-small" data-hist-download="' + esc(rec.id) + '">Download</button>' +
@@ -158,5 +160,5 @@
     download(get(el.dataset.histDownload));
   });
   async function clear() { items = []; Object.keys(urls).forEach(function (k) { URL.revokeObjectURL(urls[k]); delete urls[k]; }); if (db) await req(store('readwrite').clear()); }
-  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, restoreLine, stamp, download };
+  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, restoreLine, stamp, download, isReady: function () { return ready; } };
 })(window);

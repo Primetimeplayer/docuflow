@@ -303,7 +303,7 @@ svg { display: block; }
   margin: 0 auto;
   padding: 15px 34px 22px;
   border-top: 1px solid #e9edf4;
-  color: #98a2b3;
+  color: var(--muted-2);
   font-size: 11px;
   letter-spacing: 0.005em;
 }
@@ -915,7 +915,7 @@ svg { display: block; }
   padding: 0 20px 13px;
   background: #fcfdff;
   border-radius: 0 0 12px 12px;
-  color: #98a2b3;
+  color: var(--muted);
   font-size: 10px;
   text-align: right;
   line-height: 1.5;
@@ -1018,7 +1018,7 @@ svg { display: block; }
 .step-text { display: flex; flex-direction: column; min-width: 0; }
 .step-text strong { color: #475467; font-size: 11.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; }
 .step-text span {
-  color: #98a2b3;
+  color: var(--muted-2);
   font-size: 9.8px;
   line-height: 1.4;
   white-space: nowrap;
@@ -1199,7 +1199,7 @@ svg { display: block; }
   align-items: flex-start;
   gap: 6px;
   margin: 14px 20px 16px;
-  color: #98a2b3;
+  color: var(--muted);
   font-size: 9.8px;
   line-height: 1.55;
 }
@@ -1232,7 +1232,7 @@ svg { display: block; }
 }
 .empty-icon svg { width: 16px; height: 16px; }
 .empty-title { color: #344054; font-size: 12px; font-weight: 600; }
-.empty-text { max-width: 320px; color: #98a2b3; font-size: 10.8px; line-height: 1.55; }
+.empty-text { max-width: 320px; color: var(--muted); font-size: 10.8px; line-height: 1.55; }
 .empty .btn { margin-top: 9px; }
 
 /* ----------------------------------------------------------- placeholder */

@@ -4,8 +4,9 @@
 
   const D = window.DocuFlowData;
   const S = window.DocuFlowStore;
+  const SET = window.DocuFlowSettings;
 
-  let windowDays = 30;
+  let windowDays = 0;
   let period = 'month';
   let tables = {};
   let ctx = null;
@@ -86,7 +87,8 @@
   }
 
   function expiringTable(workers) {
-    const items = D.expiryItems(workers).filter(function (item) { return item.days <= windowDays; });
+    const win = windowDays || SET.expiryDays();
+    const items = D.expiryItems(workers).filter(function (item) { return item.days <= win; });
     const rows = items.map(function (item) {
       let label = 'Upcoming';
       let cls = 'status-neutral';
@@ -107,32 +109,17 @@
       };
     });
     const chips = [30, 60, 90].map(function (days) {
-      return '<button type="button" class="chip-filter' + (windowDays === days ? ' is-active' : '') + '" data-rep="window" data-value="' + days + '" aria-pressed="' + (windowDays === days) + '">' + days + ' days</button>';
+      return '<button type="button" class="chip-filter' + (win === days ? ' is-active' : '') + '" data-rep="window" data-value="' + days + '" aria-pressed="' + (win === days) + '">' + days + ' days</button>';
     }).join('');
     return tableCard('expiring', 'Expiring documents', 'Soonest first, including anything already expired',
       ['Worker', 'Document', 'Expiry', 'Days left', 'Status'], rows, chips,
-      'Nothing expires in the next ' + windowDays + ' days');
+      'Nothing expires in the next ' + win + ' days');
   }
 
   function missingTable(workers) {
-    const required = [
-      ['First name', 'firstName'],
-      ['Surname', 'surname'],
-      ['Date of birth', 'dob'],
-      ['Nationality', 'nationality'],
-      ['Passport number', 'passportNo'],
-      ['Passport expiry', 'passportExpiry'],
-      ['PESEL', 'pesel'],
-      ['Email', 'email']
-    ];
     const gaps = [];
     workers.forEach(function (worker) {
-      const missing = required.filter(function (field) {
-        return !String(worker[field[1]] || '').trim();
-      }).map(function (field) { return field[0]; });
-      if (worker.nationality !== 'Polish' && !String(worker.residenceCardExpiry || '').trim()) {
-        missing.push('Residence card expiry');
-      }
+      const missing = SET.missingFor(worker);
       if (missing.length) gaps.push({ worker: worker, missing: missing });
     });
     gaps.sort(function (a, b) {
@@ -151,7 +138,7 @@
       };
     });
     return tableCard('missing', 'Missing information',
-      gaps.length + ' workers with gaps in their record',
+      gaps.length + ' workers with gaps in their record · rules from Settings → Required documents',
       ['Worker', 'Missing', ''], rows, '', 'Every record is complete');
   }
 
@@ -197,12 +184,12 @@
       '</section>';
   }
 
-  function auditTable(workers, stored) {
-    const events = [];
-    stored.forEach(function (doc) {
+  function events(workers) {
+    const list = [];
+    S.all().forEach(function (doc) {
       const worker = workers.find(function (w) { return w.id === doc.workerId; });
       const name = worker ? D.fullName(worker) : 'Unknown worker';
-      events.push({
+      list.push({
         at: doc.uploadedAt,
         action: 'Uploaded',
         doc: doc,
@@ -210,7 +197,7 @@
         by: doc.uploadedBy === 'employee' ? name + ' (employee)' : (doc.reviewedBy || 'Recruiter')
       });
       if (doc.uploadedBy === 'employee' && doc.reviewedAt && (doc.status === 'Verified' || doc.status === 'Rejected')) {
-        events.push({
+        list.push({
           at: doc.reviewedAt,
           action: doc.status,
           doc: doc,
@@ -219,7 +206,7 @@
         });
       }
       (doc.restores || []).forEach(function (restored) {
-        events.push({
+        list.push({
           at: restored.at,
           action: 'Restored',
           doc: doc,
@@ -228,8 +215,12 @@
         });
       });
     });
-    events.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
-    const rows = events.slice(0, 10).map(function (event) {
+    list.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
+    return list;
+  }
+
+  function auditTable(workers) {
+    const rows = events(workers).slice(0, 10).map(function (event) {
       return {
         href: '#/documents/' + encodeURIComponent(event.doc.id),
         cells: [
@@ -294,7 +285,8 @@
     const workers = context.workers || [];
     const stored = S.all();
     const items = D.expiryItems(workers);
-    const expiring = items.filter(function (item) { return item.days >= 0 && item.days <= 30; }).length;
+    const days = SET.expiryDays();
+    const expiring = items.filter(function (item) { return item.days >= 0 && item.days <= days; }).length;
     const expired = items.filter(function (item) { return item.days < 0; }).length;
     const complete = workers.filter(function (worker) { return D.computeStatus(worker) === 'Complete'; }).length;
     const awaiting = stored.filter(function (doc) { return doc.status === 'Awaiting review'; }).length;
@@ -303,18 +295,18 @@
       tile('Total workers', String(workers.length), 'In this workspace', false) +
       tile('Complete records', percent(complete, workers.length) + '%', complete + ' of ' + workers.length + ' workers', false) +
       tile('Awaiting review', String(awaiting), awaiting === 1 ? 'Document to check' : 'Documents to check', awaiting > 0) +
-      tile('Expiring in 30 days', String(expiring), 'Passports, cards and licences', expiring > 0) +
+      tile('Expiring in ' + days + ' days', String(expiring), 'Passports, cards and licences', expiring > 0) +
       tile('Expired', String(expired), expired ? 'Worker cannot be scheduled' : 'Nothing expired', expired > 0) +
       '</div>';
 
     return context.pageHead('Compliance', 'Reports',
-      'Live from your worker records and document library · ' + D.formatDate(isoLocal(new Date())) + ' (today)',
+      esc(SET.get('org.name')) + ' · live from your worker records and document library · ' + D.formatDate(isoLocal(new Date())) + ' (today)',
       '<button type="button" class="btn btn-quiet" data-rep="print">Print / Save as PDF</button>') +
       stats +
       expiringTable(workers) +
       missingTable(workers) +
       reviewsSection(stored) +
-      auditTable(workers, stored) +
+      auditTable(workers) +
       '<div class="rep-charts">' + nationalityChart(workers) + statusChart(workers) + '</div>';
   }
 
@@ -359,5 +351,5 @@
     }
   });
 
-  window.DocuFlowReports = { render: render, tables: function () { return tables; } };
+  window.DocuFlowReports = { render: render, events: events, tables: function () { return tables; } };
 })();

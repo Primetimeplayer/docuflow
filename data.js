@@ -358,13 +358,17 @@
   }
 
   function computeStatus(w) {
+    const S = global.DocuFlowSettings;
+    const windowDays = S ? S.expiryDays() : 30;
     const dates = [w.passportExpiry, w.licenceExpiry, w.residenceCardExpiry];
     const soon = dates.some((d) => {
       const n = daysUntil(d);
-      return n !== null && n <= 30;
+      return n !== null && n <= windowDays;
     });
     if (soon) return 'Expiring';
-    const missingCore = !w.firstName || !w.surname || !w.passportNo || !w.passportExpiry || !w.pesel || (w.nationality !== 'Polish' && !w.residenceCardExpiry);
+    const missingCore = S
+      ? S.missingFor(w).length > 0
+      : !w.firstName || !w.surname || !w.passportNo || !w.passportExpiry || !w.pesel || (w.nationality !== 'Polish' && !w.residenceCardExpiry);
     if (missingCore) return 'Review';
     return 'Complete';
   }

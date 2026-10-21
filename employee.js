@@ -4,6 +4,7 @@
 
   const D = window.DocuFlowData;
   const OCR = window.DocuFlowOCR;
+  const SET = window.DocuFlowSettings;
 
   const svg = (inner) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
   const ICONS = {
@@ -281,7 +282,8 @@
       return { pill: 'Valid', pillClass: 'status-complete', box: 'Does not expire', small: '—', tone: '', needs: false, days: null, boxTone: '' };
     }
     const days = D.daysUntil(doc.date);
-    const needs = days !== null && days <= 30;
+    const win = SET.expiryDays();
+    const needs = days !== null && days <= win;
     const tone = needs ? D.toneForDays(days) : 'green';
     let pillText = 'Valid';
     let box;
@@ -291,7 +293,7 @@
       box = 'Expired on <b>' + D.formatDate(doc.date) + '</b>';
       const ago = Math.abs(days);
       small = ago + (ago === 1 ? ' day ago' : ' days ago');
-    } else if (days !== null && days <= 30) {
+    } else if (days !== null && days <= win) {
       pillText = 'Expiring soon';
       box = 'Valid until <b>' + D.formatDate(doc.date) + '</b>';
       small = D.humanDays(days);
@@ -312,7 +314,7 @@
     }
     return {
       pill: pillText,
-      pillClass: days !== null && days <= 30 ? toneStatusClass(tone) : 'status-complete',
+      pillClass: days !== null && days <= win ? toneStatusClass(tone) : 'status-complete',
       box: box,
       small: small,
       tone: needs ? tone : '',
@@ -441,15 +443,25 @@
   function detailsView(w) {
     const missing = missingFields(w).length;
     return '<header class="page-head"><div class="page-head-main">' +
-      '<p class="eyebrow">My account</p><h1>My details</h1>' +
-      '<p class="lede">This is what Where2Work has on file for you. Anything missing has an <b>Add</b> button. Your coordinator checks changes to your name or PESEL against your documents.</p>' +
+      '<p class="eyebrow">' + esc(SET.t('My account')) + '</p><h1>' + esc(SET.t('My details')) + '</h1>' +
+      '<p class="lede">This is what ' + esc(SET.get('org.short')) + ' has on file for you. Anything missing has an <b>Add</b> button. Your coordinator checks changes to your name or PESEL against your documents.</p>' +
       '</div></header>' +
       '<div class="emp-tabs"><a class="on" href="#/me/details" aria-current="page">Details</a><a href="#/me/notifications">Notifications</a></div>' +
       SECTIONS.map(function (section) { return sectionMarkup(w, section); }).join('') +
-      '<p class="form-footnote">' + (missing ? missing + (missing === 1 ? ' field is' : ' fields are') + ' still missing.' : 'Everything required is filled in.') + '</p>';
+      '<p class="form-footnote">' + (missing ? missing + (missing === 1 ? ' field is' : ' fields are') + ' still missing.' : 'Everything required is filled in.') + '</p>' +
+      '<section class="card emp-consent" data-consent><h2>How we use your data</h2>' +
+        '<p>' + esc(SET.get('privacy.consent')) + '</p>' +
+        '<p>Your records are kept for ' + SET.get('privacy.retentionYears') + ' years after you stop working with ' + esc(SET.get('org.short')) + '.</p>' +
+      '</section>';
   }
 
   /* ----------------------------------------------------------------- home */
+
+  function reminderLine() {
+    return SET.get('expiry.employeeReminders')
+      ? 'We\'ll remind you ' + SET.expiryDays() + ' days before anything runs out.'
+      : 'Expiry reminders are switched off by ' + SET.get('org.short') + '.';
+  }
 
   function greeting() {
     const hour = new Date().getHours();
@@ -492,18 +504,19 @@
           (busyDoc ? ' disabled' : '') + '>Upload new one</button></div>';
       }).join('')
       : '<div class="emp-alert">' + iconBox('check', 'green') +
-        '<div class="emp-alert-main"><strong>All your documents are in date</strong><span>We\'ll remind you 30 days before anything runs out.</span></div></div>';
+        '<div class="emp-alert-main"><strong>All your documents are in date</strong><span>' + esc(reminderLine()) + '</span></div></div>';
 
     const attention = '<section class="card emp-card">' +
       '<div class="card-head"><div><h2>Needs your attention</h2><p class="card-sub">Documents that expire soon or have expired</p></div>' +
       '<a class="text-link" href="#/me/documents">All documents</a></div>' +
       alertRows + '</section>';
 
-    const ghostHeights = [60, 80, 20, 80, 70, 8, 8];
-    const hours = '<article class="card emp-mini emp-soon">' +
-      '<div class="emp-mini-top"><h3>Hours this week</h3><span class="chip chip-blue">Coming soon</span></div>' +
-      '<div class="emp-ghost">' + ghostHeights.map(function (h) { return '<i style="height:' + h + '%"></i>'; }).join('') + '</div>' +
-      '<p class="emp-sub"><strong>Rossmann card-tap clock.</strong> Your hours will appear here automatically when you tap in and out with your staff card.</p>' +
+    const coordinator = SET.coordinator();
+    const contact = '<article class="card emp-mini" data-coordinator>' +
+      '<div class="emp-mini-top"><h3>Your coordinator</h3></div>' +
+      '<div class="emp-shift"><span class="avatar avatar-lg">' + esc(D.initials(coordinator.name.split(' ')[0], coordinator.name.split(' ').slice(-1)[0])) + '</span>' +
+      '<div><b class="time">' + esc(coordinator.name) + '</b><span class="emp-sub">' + esc(SET.get('org.name')) + '</span></div></div>' +
+      '<p class="emp-sub">' + esc([coordinator.phone, coordinator.email].filter(Boolean).join(' · ')) + '</p>' +
       '</article>';
 
     const days = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
@@ -528,10 +541,10 @@
     return '<div class="emp-hello">' +
       '<span class="avatar avatar-lg">' + esc(D.initials(w.firstName, w.surname)) + '</span>' +
       '<div><h1>' + greeting() + ', ' + esc(w.firstName) + '</h1>' +
-      '<p>' + D.formatDate(shiftDay, { weekday: 'long' }) + ', ' + D.formatDate(shiftDay) + ' · Rossmann store, Warsaw · via Where2Work sp. z o.o.</p></div>' +
+      '<p>' + D.formatDate(shiftDay, { weekday: 'long' }) + ', ' + D.formatDate(shiftDay) + ' · Rossmann store, Warsaw · via ' + esc(SET.get('org.name')) + '</p></div>' +
       '</div>' +
       progress + attention +
-      '<div class="emp-grid">' + shift + hours + availabilityCard + '</div>';
+      '<div class="emp-grid">' + shift + contact + availabilityCard + '</div>';
   }
 
   /* ------------------------------------------------------------ documents */
@@ -602,8 +615,8 @@
     }).join('');
 
     return '<header class="page-head"><div class="page-head-main">' +
-      '<p class="eyebrow">My account</p><h1>My documents</h1>' +
-      '<p class="lede">Everything Where2Work holds for you, with the date each one runs out. We\'ll remind you 30 days before.</p>' +
+      '<p class="eyebrow">' + esc(SET.t('My account')) + '</p><h1>' + esc(SET.t('My documents')) + '</h1>' +
+      '<p class="lede">Everything ' + esc(SET.get('org.short')) + ' holds for you, with the date each one runs out. ' + esc(reminderLine()) + '</p>' +
       '</div></header>' +
       '<div class="card emp-autofill">' + iconBox('spark', 'blue') +
       '<span><strong>Snap a photo, we do the typing.</strong> When you upload a new passport or residence card, DocuFlow reads it and fills in your details for you to check.</span></div>' +
@@ -662,7 +675,7 @@
       });
     }
 
-    needingAction(w).forEach(function (doc) {
+    (SET.get('expiry.employeeReminders') ? needingAction(w) : []).forEach(function (doc) {
       const state = docState(doc);
       const expired = state.days < 0;
       notes.push({
@@ -770,7 +783,7 @@
     }
 
     return '<header class="page-head"><div class="page-head-main">' +
-      '<p class="eyebrow">My account</p><h1>Notifications</h1>' +
+      '<p class="eyebrow">' + esc(SET.t('My account')) + '</p><h1>' + esc(SET.t('Notifications')) + '</h1>' +
       '<p class="lede">Reminders, document updates and sign-ins to your account.</p>' +
       '</div></header>' +
       '<div class="emp-filters">' + filters +
@@ -962,14 +975,14 @@
     ];
     return '<nav class="emp-tabbar" aria-label="My account">' + items.map(function (item) {
       return '<a href="' + item.href + '"' + (sub === item.key ? ' class="is-active" aria-current="page"' : '') + '>' +
-        ICONS[item.icon] + item.label +
+        ICONS[item.icon] + esc(SET.t(item.label)) +
         (item.count ? '<span class="dot ' + item.cls + '">' + item.count + '</span>' : '') +
         '</a>';
     }).join('') + '</nav>';
   }
 
   function fileInput() {
-    return '<input type="file" id="emp-file" class="sr-only" accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf">';
+    return '<input type="file" id="emp-file" class="sr-only" aria-label="Choose a document file" accept="' + esc(SET.accept()) + '">';
   }
 
   function render(nextSub, ctx) {
@@ -1073,7 +1086,10 @@
       readIds.signin = true;
       rerender();
     } else if (action === 'not-me') {
-      ctx.toast('Demo only: this would sign out every device and ask for a new password.');
+      readIds.signin = true;
+      addSessionEvent('You signed out of all other devices', 'Your coordinator has been told. Use a new password next time you sign in.');
+      rerender();
+      ctx.toast('Signed out of all other devices. Your coordinator has been told.');
     } else if (action === 'day') {
       const index = Number(el.dataset.day);
       availability[index] = !availability[index];
@@ -1088,6 +1104,8 @@
     pendingDoc = null;
     event.target.value = '';
     if (!file || !docId) return;
+    const problem = SET.checkFile(file);
+    if (problem) { if (lastCtx) lastCtx.toast(problem, 'error'); return; }
     uploadDocument(file, docId);
   });
 
