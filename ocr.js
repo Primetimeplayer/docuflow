@@ -218,6 +218,11 @@
       : { value: nationalityCode, confidence: 60, source, note: 'Country code only' };
     fields.sex = { value: sexChar === 'F' ? 'F' : sexChar === 'M' ? 'M' : '', confidence: 95, source };
     fields.issuingCountry = { value: issuing, confidence: 95, source };
+    /* raw = how the value is printed in the MRZ; check = its own check digit. */
+    fields.surname.raw = surname; fields.firstName.raw = given; fields.nationality.raw = nationalityCode;
+    fields.passportNo.raw = number; fields.passportNo.check = numberCheck;
+    fields.dob.raw = birthRaw; fields.dob.check = birthCheck;
+    fields.passportExpiry.raw = expiryRaw; fields.passportExpiry.check = expiryCheck;
 
     return {
       kind: 'passport',
@@ -321,21 +326,51 @@
     return '';
   }
 
+  const LICENCE_WORDS = /forklift|w[oó]zk|udt|operator\s+licen/i;
+  const LICENCE_NO_LABEL = /\b(?:licen[cs]e|certificate|za[sś]wiadczeni[ea]|uprawnie[nń]|nr|no)\.?\s*(?:no\.?|nr|number|numer)?\s*[:#]?\s*([A-Z0-9][A-Z0-9/\\.-]{4,24})/i;
+
   function parseLicence(text) {
-    const m = /UDT\s*[/\\-]\s*(\d{4})\s*[/\\-]\s*(\d{3,5})/i.exec(String(text || ''));
-    if (!m) return null;
-    const number = 'UDT/' + m[1] + '/' + m[2];
-    const expiry = labelledDate(text, EXPIRY_LABEL) || allDates(text).filter((d) => d > isoToday()).pop() || '';
+    const source = 'Forklift licence';
+    const all = String(text || '');
+    let number = '';
+    let numberConf = 95;
+    const m = /UDT\s*[/\\-]\s*(\d{4})\s*[/\\-]\s*(\d{3,5})/i.exec(all);
+    if (m) number = 'UDT/' + m[1] + '/' + m[2];
+    else if (LICENCE_WORDS.test(all)) {
+      /* Other issuers: take a labelled number that contains at least one digit. */
+      const lines = all.split(/\r?\n/);
+      for (const line of lines) {
+        const hit = LICENCE_NO_LABEL.exec(line);
+        if (hit && /\d/.test(hit[1]) && !DATE_TOKEN.test(hit[1])) { number = hit[1].toUpperCase(); numberConf = 82; break; }
+      }
+    }
+    if (!number) return null;
+    const labelled = labelledDate(text, EXPIRY_LABEL);
+    const expiry = labelled || allDates(text).filter((d) => d > isoToday()).pop() || '';
     const fields = {
-      forkliftLicenceNo: { value: number, confidence: 95, source: 'Forklift licence' }
+      forkliftLicenceNo: { value: number, confidence: numberConf, source }
     };
     if (expiry) {
-      fields.licenceExpiry = { value: expiry, confidence: 95, source: 'Forklift licence' };
+      /* A date without a "valid until" label is a guess. */
+      fields.licenceExpiry = { value: expiry, confidence: labelled ? 95 : 62, source, note: labelled ? '' : 'Date found without a label' };
     }
+    /* Category: UDT uses I WJO / II WJO / III WJO; other issuers print a letter code. */
+    /* OCR often reads the Roman I as l, 1 or |. */
+    const cat = /(?:^|[\s:])([Il1|]{1,3})\s*[-.]?\s*WJO\b/.exec(all) || /categor(?:y|ies|ia)\s*[:.]?\s*([A-Z0-9+-]{1,6}(?: [A-Z0-9+-]{1,6})?)/i.exec(all);
+    if (cat) {
+      const value = /WJO/i.test(cat[0]) ? 'I'.repeat(cat[1].length) + ' WJO' : cat[1].trim().toUpperCase();
+      fields['p:licenceCategory'] = { value, confidence: 85, source, note: 'Pattern match, no check digit' };
+    }
+    const holder = {};
+    const name = labeledName(text, /holder\s*name|holder|imi[eę]\s+i\s+nazwisko|name/i);
+    if (name) holder.name = { value: name, confidence: 85, source, raw: name };
+    const dob = labelledDate(text, /date\s+of\s+birth|data\s+urodzenia|born/i);
+    if (dob) holder.dob = { value: dob, confidence: 90, source };
     return {
       kind: 'licence',
       typeLabel: 'Forklift licence detected',
       fields,
+      holder,
       note: expiry ? '' : 'Licence number found, but no expiry date'
     };
   }
@@ -411,6 +446,7 @@
           kind: 'licence',
           typeLabel: licence.typeLabel,
           fields: Object.assign({}, licence.fields),
+          holder: licence.holder,
           note: licence.note
         };
       } else if (!Object.keys(result.fields).length) {
@@ -527,9 +563,22 @@
     return 'Reading document…';
   }
 
+  function readerError(message, code) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+  }
+
   async function recognise(canvas, onStatus) {
-    await loadScript(CDN.tesseract);
-    if (!global.Tesseract) throw new Error('The text reader did not start. Check your connection and try again.');
+    if (global.navigator && global.navigator.onLine === false && !global.Tesseract) {
+      throw readerError('You’re offline, so the document reader can’t load.', 'offline');
+    }
+    try {
+      await loadScript(CDN.tesseract);
+    } catch (err) {
+      throw readerError(err.message, 'offline');
+    }
+    if (!global.Tesseract) throw readerError('The text reader did not start. Check your connection and try again.', 'offline');
 
     let worker;
     try {
@@ -545,7 +594,8 @@
         }
       });
       const { data } = await worker.recognize(canvas);
-      return data.text || '';
+      const words = (data.words || []).map((w) => ({ text: w.text || '', conf: Number(w.confidence) || 0 }));
+      return { text: data.text || '', words, confidence: Number(data.confidence) || 0 };
     } catch (err) {
       console.warn('DocuFlow OCR failed', err);
       throw new Error('The text reader could not read this file. Try a clearer image, or use a sample document.');
@@ -574,9 +624,99 @@
     const preview = canvas.toDataURL('image/png');
     if (cb.onPreview) cb.onPreview(preview);
     notify(0.12, 'Preparing local text reader…');
-    const text = await recognise(canvas, cb.onStatus);
-    const parsed = parseText(text);
-    return Object.assign({}, parsed, { preview, text, fileName: file.name || 'document' });
+    const read = await recognise(canvas, cb.onStatus);
+    const text = read.text;
+    const parsed = scoreFields(parseText(text), read);
+    return Object.assign({}, parsed, { preview, text, ocrConfidence: Math.round(read.confidence), fileName: file.name || 'document' });
+  }
+
+  /* ------------------------------------------------- confidence per field */
+
+  const compact = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9<]/g, '');
+
+  function needleFor(field) {
+    if (field.raw) return compact(field.raw);
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(field.value || '');
+    if (iso) return iso[3] + iso[2] + iso[1];
+    return compact(field.value);
+  }
+
+  /* How sure the reader was about the words that hold this value. */
+  function wordConfidence(read, needle) {
+    if (!needle) return null;
+    const words = (read.words || []).map((w) => ({ c: compact(w.text), conf: w.conf })).filter((w) => w.c);
+    const whole = words.filter((w) => w.c.indexOf(needle) >= 0);
+    if (whole.length) return Math.max.apply(null, whole.map((w) => w.conf));
+    const parts = words.filter((w) => w.c.length >= 2 && needle.indexOf(w.c) >= 0);
+    if (parts.length) return parts.reduce((a, w) => a + w.conf, 0) / parts.length;
+    return null;
+  }
+
+  function scoreOne(field, read) {
+    if (!field || !field.value) return;
+    const words = wordConfidence(read, needleFor(field));
+    const base = words === null ? Math.max(0, (read.confidence || 70) - 15) : words;
+    let conf;
+    if (field.check === true) conf = Math.max(90, Math.min(99, Math.max(base, 92)));
+    else if (field.check === false) { conf = Math.min(base, 55); field.note = field.note || 'Check digit doesn’t match'; }
+    else conf = Math.min(field.confidence || 95, base);
+    if (field.cross === false) conf = Math.min(conf, 85);
+    field.ocr = Math.round(base);
+    field.confidence = Math.round(conf);
+  }
+
+  function scoreFields(parsed, read) {
+    if (!parsed || !parsed.fields) return parsed;
+    const text = read.text || '';
+    if (parsed.kind === 'passport') {
+      /* Names have no check digit: they count as sure only if the printed page agrees with the MRZ. */
+      const visual = compact(text.split(/\r?\n/).filter((l) => (l.match(/</g) || []).length < 3).join(' '));
+      ['surname', 'firstName'].forEach((k) => {
+        const f = parsed.fields[k];
+        if (f && f.value) {
+          f.cross = visual.indexOf(compact(f.value)) >= 0;
+          if (!f.cross) f.note = f.note || 'Only found in the machine-readable lines';
+        }
+      });
+    }
+    Object.keys(parsed.fields).forEach((k) => scoreOne(parsed.fields[k], read));
+    if (parsed.holder) Object.keys(parsed.holder).forEach((k) => scoreOne(parsed.holder[k], read));
+    return parsed;
+  }
+
+  /* high: sure; medium: above the review threshold; low: a person must check it. */
+  function level(confidence, threshold) {
+    const t = Number(threshold) || 80;
+    const c = Number(confidence) || 0;
+    if (c >= Math.max(90, t)) return 'high';
+    if (c >= t) return 'medium';
+    return 'low';
+  }
+
+  /* Specimen documents shipped in /samples. SVGs become PNG files so they take the real upload path. */
+  const SPECIMENS = {
+    passport: 'specimen-passport-olena.svg',
+    newPassport: 'specimen-passport-new-worker.svg',
+    licence: 'specimen-forklift-licence-olena.pdf'
+  };
+
+  async function specimenFile(name) {
+    const fileName = SPECIMENS[name] || name;
+    const res = await fetch('samples/' + fileName, { cache: 'no-cache' });
+    if (!res.ok) throw new Error('Could not open the specimen document.');
+    const blob = await res.blob();
+    if (!/\.svg$/i.test(fileName)) return new File([blob], fileName, { type: blob.type || 'application/pdf' });
+    const url = URL.createObjectURL(new Blob([await blob.text()], { type: 'image/svg+xml' }));
+    try {
+      const img = await loadImage(url);
+      const canvas = makeCanvas(img.naturalWidth * 2, img.naturalHeight * 2);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const png = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      return new File([png], fileName.replace(/\.svg$/i, '.png'), { type: 'image/png' });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   /* -------------------------------------------------------- sample images */
@@ -826,6 +966,9 @@
     extractMrz,
     runSample,
     sampleCanvas,
+    level,
+    specimenFile,
+    SPECIMENS,
     SAMPLE,
     CDN
   };

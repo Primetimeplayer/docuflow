@@ -89,6 +89,7 @@
     docQuery: '',
     zoom: 100,
     flow: freshFlow(),
+    intake: freshIntake(),
     route: null
   };
 
@@ -139,6 +140,36 @@
     }, 3400);
   }
 
+  /* A toast with buttons (Open, Undo). Stays 9 s, or until a button is used. */
+  function toastActions(message, actions, tone) {
+    if (!toasts) return null;
+    const el = document.createElement('div');
+    el.className = 'toast toast-has-actions' + (tone ? ' toast-' + tone : '');
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<span class="toast-mark">' + (tone === 'error' ? '!' : '✓') + '</span><span class="toast-body"><span>' + esc(message) + '</span>' +
+      '<span class="toast-actions">' + actions.map(function (a, i) {
+        return '<button type="button" class="toast-btn" data-toast-btn="' + i + '">' + esc(a.label) + '</button>';
+      }).join('') + '</span></span>';
+    let timer = null;
+    const close = function () {
+      clearTimeout(timer);
+      el.classList.remove('is-in');
+      setTimeout(function () { el.remove(); }, 180);
+    };
+    el.addEventListener('click', function (event) {
+      const button = event.target.closest('[data-toast-btn]');
+      if (!button) return;
+      close();
+      actions[Number(button.dataset.toastBtn)].run();
+    });
+    toasts.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('is-in'); });
+    timer = setTimeout(close, 9000);
+    el.addEventListener('mouseenter', function () { clearTimeout(timer); });
+    el.addEventListener('mouseleave', function () { timer = setTimeout(close, 4000); });
+    return el;
+  }
+
   function closeNav() {
     document.body.classList.remove('nav-open');
     const button = document.querySelector('[data-action="toggle-nav"]');
@@ -178,9 +209,10 @@
     });
   }
 
-  function statusPill(status) {
+  function statusPill(status, worker) {
     const cls = status === 'Complete' ? 'complete' : status === 'Expiring' ? 'expiring' : 'review';
-    return '<span class="status status-' + cls + '"><span class="status-dot"></span>' + esc(status) + '</span>';
+    const label = worker && worker.needsReview ? 'New – needs review' : status;
+    return '<span class="status status-' + cls + (worker && worker.needsReview ? ' status-new' : '') + '"><span class="status-dot"></span>' + esc(label) + '</span>';
   }
 
   function toneClass(tone) {
@@ -334,7 +366,7 @@
           '<td><div class="person">' + avatar(w) + '<div class="person-text"><span class="person-name">' + esc(D.fullName(w)) + '</span><span class="person-meta">' + esc(w.nationality) + '</span></div></div></td>' +
           '<td><span class="mono">' + esc(w.passportNo ? SET.mask('passportNo', w.passportNo) : '—') + '</span></td>' +
           '<td><span class="mono">' + esc(w.forkliftLicenceNo || '—') + '</span></td>' +
-          '<td>' + statusPill(w.status) + '</td>' +
+          '<td>' + statusPill(w.status, w) + '</td>' +
           '</tr>';
       }).join('') +
       '</tbody></table></div>';
@@ -400,7 +432,7 @@
             '<td><span class="mono">' + esc(w.pesel ? SET.mask('pesel', w.pesel) : '—') + '</span></td>' +
             '<td><span class="mono">' + esc(w.passportNo ? SET.mask('passportNo', w.passportNo) : '—') + '</span></td>' +
             '<td><span class="mono">' + esc(w.forkliftLicenceNo || '—') + '</span></td>' +
-            '<td>' + statusPill(w.status) + '</td>' +
+            '<td>' + statusPill(w.status, w) + '</td>' +
             '</tr>';
         }).join('') +
         '</tbody></table></div>';
@@ -435,11 +467,12 @@
       '<header class="page-head worker-head">' +
         '<div class="page-head-main worker-title">' +
           '<span class="avatar avatar-lg">' + esc(D.initials(worker.firstName, worker.surname)) + '</span>' +
-          '<div><div class="worker-name-row"><h1>' + esc(D.fullName(worker)) + '</h1>' + statusPill(worker.status) + '</div>' +
+          '<div><div class="worker-name-row"><h1>' + esc(D.fullName(worker)) + '</h1>' + statusPill(worker.status, worker) + '</div>' +
           '<p class="lede">' + esc(worker.nationality) + ' · Passport ' + esc(worker.passportNo ? SET.mask('passportNo', worker.passportNo) : 'not recorded') + ' · ' + (worker.documents ? worker.documents.length : 0) + ' document' + ((worker.documents ? worker.documents.length : 0) === 1 ? '' : 's') + '</p></div>' +
         '</div>' +
         '<div class="page-actions">' + actions + '</div>' +
       '</header>' +
+      (worker.needsReview ? newWorkerNotice(worker) : '') +
       '<div class="detail-grid">' +
         '<section class="card form-card">' +
           '<div class="card-head"><div><h2>Worker details</h2><p class="card-sub">' + (state.editing ? 'Editing this record' : 'Read-only until you choose Edit') + '</p></div>' + (state.editing ? '<span class="chip chip-blue">Editing</span>' : '') + '</div>' +
@@ -559,6 +592,7 @@
     }).join('');
 
     return pageHead('Records', 'Documents', 'Every document uploaded by workers and recruiters. Open one to check it against the worker’s record.') +
+      (SET.can('edit') ? intakeCard() : '') +
       '<section class="card">' +
         '<div class="table-toolbar">' +
           '<div class="search"><span class="search-icon">' + ICONS.search + '</span>' +
@@ -693,7 +727,7 @@
       };
       const changed = !!next && next !== current;
       return '<tr' + (changed ? ' class="is-changed"' : '') + '>' +
-        '<td>' + esc(label) + '</td>' +
+        '<td>' + esc(label) + confChip(doc.ocr && doc.ocr[key], doc.uploadedBy) + '</td>' +
         '<td>' + (changed ? '<span class="old">' + show(current) + '</span> →' : show(current)) + '</td>' +
         '<td>' + (changed ? '<span class="new">' + show(next) + '</span>' : show(next)) + '</td>' +
         '</tr>';
@@ -776,6 +810,10 @@
     applyDocFields(worker, doc);
     worker.documents = worker.documents || [];
     if (doc.fileName && worker.documents.indexOf(doc.fileName) < 0) worker.documents.push(doc.fileName);
+    if (worker.needsReview) {
+      delete worker.needsReview;
+      SET.log('Verified new worker ' + D.fullName(worker) + ' (created from a ' + doc.type.toLowerCase() + ' upload)', 'Documents');
+    }
     worker.status = D.computeStatus(worker);
     D.saveWorkers(state.workers);
     S.update(id, { status: 'Verified', reason: '', reviewedAt: new Date().toISOString(), reviewedBy: REVIEWER }).then(function () {
@@ -1108,6 +1146,7 @@
   }
 
   function wirePage() {
+    if (state.route.name === 'documents') wireIntake();
     if (state.route.name !== 'new') return;
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('file-input');
@@ -1143,6 +1182,244 @@
       const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
       if (file) startUpload(file);
     });
+  }
+
+  /* ------------------------------------- recruiter upload: find or create */
+
+  const INTAKE_KEYS = {
+    passport: ['firstName', 'surname', 'dob', 'nationality', 'passportNo', 'passportExpiry'],
+    licence: ['forkliftLicenceNo', 'p:licenceCategory', 'licenceExpiry']
+  };
+  const INTAKE_SPECIMENS = [['passport', 'Passport · Olena Kovalenko'], ['newPassport', 'Passport · new worker'], ['licence', 'Forklift licence (PDF)']];
+
+  function freshIntake() { return { busy: false, progress: 0, label: '', error: '' }; }
+
+  function confChip(meta, by) {
+    if (!meta) return '';
+    const who = by === 'employee' ? 'worker' : 'you';
+    if (meta.edited) return ' <span class="conf conf-edited">Edited by ' + who + '</span>';
+    if (meta.checked) return ' <span class="conf conf-high">Checked by ' + who + '</span>';
+    if (meta.level === 'manual' || meta.confidence === null || meta.confidence === undefined) return ' <span class="conf conf-edited">Typed in</span>';
+    const names = { high: 'High', medium: 'Medium', low: 'Low' };
+    return ' <span class="conf conf-' + esc(meta.level) + '" title="Reader confidence ' + esc(meta.confidence) + '%">' + names[meta.level] + ' · ' + esc(meta.confidence) + '%</span>';
+  }
+
+  function newWorkerNotice(worker) {
+    const doc = S.forWorker(worker.id).find(function (d) { return d.status === 'Awaiting review'; });
+    return '<div class="notice notice-warn new-worker-notice" data-new-worker><strong>New – needs review</strong><span>DocuFlow created this record from ' +
+      esc(worker.createdFrom ? 'a ' + worker.createdFrom : 'an upload') + (worker.createdAt ? ' on ' + esc(docDate(worker.createdAt)) : '') +
+      '. Check the details against the document, then verify it.</span>' +
+      (doc ? '<a class="btn btn-primary btn-small" href="#/documents/' + esc(doc.id) + '">Review document</a>' : '') + '</div>';
+  }
+
+  function intakeCard() {
+    const it = state.intake;
+    const pct = Math.round(Math.max(0, Math.min(1, it.progress)) * 100);
+    const body = it.busy
+      ? '<div class="progress-block intake-progress"><div class="progress-label"><span class="progress-status" id="intake-status">' + esc(it.label || 'Reading document…') + '</span><span id="intake-percent">' + pct + '%</span></div>' +
+        '<div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-label="Reading document"><span id="intake-bar" style="width:' + pct + '%"></span></div></div>'
+      : '<div class="dropzone intake-dropzone" id="intake-dropzone">' +
+        '<span class="dropzone-icon">' + ICONS.upload + '</span>' +
+        '<p class="dropzone-title">Drop a passport or forklift licence</p>' +
+        '<p class="dropzone-text">or <button type="button" class="link-button" data-action="intake-choose">browse your files</button></p>' +
+        '<p class="dropzone-hint">' + esc(SET.typesLabel()) + ' · up to ' + esc(SET.get('ocr.maxMb')) + ' MB · read on this device</p>' +
+        '<input type="file" id="intake-input" class="sr-only" aria-label="Choose a passport or forklift licence" accept="' + esc(SET.accept()) + '">' +
+        '</div>';
+    return '<section class="card intake-card" id="intake">' +
+      '<div class="card-head"><div><h2>Upload a document</h2><p class="card-sub">DocuFlow reads it, finds the worker it belongs to, or creates a new record marked “New – needs review”. Nothing is applied until you verify it.</p></div></div>' +
+      '<div class="intake-body">' + body +
+        (it.error ? '<div class="notice notice-error intake-error" role="alert"><strong>Nothing was saved</strong><span>' + esc(it.error) + ' <a class="text-link" href="#/new">Add a worker by hand</a></span></div>' : '') +
+        '<p class="intake-samples">Try a specimen: ' + INTAKE_SPECIMENS.map(function (sp) {
+          return '<button type="button" class="link-button" data-action="intake-specimen" data-value="' + sp[0] + '"' + (it.busy ? ' disabled' : '') + '>' + esc(sp[1]) + '</button>';
+        }).join(' · ') + '</p>' +
+      '</div></section>';
+  }
+
+  function wireIntake() {
+    const zone = document.getElementById('intake-dropzone');
+    const input = document.getElementById('intake-input');
+    if (!zone || !input) return;
+    input.addEventListener('change', function () { if (input.files && input.files[0]) startIntake(input.files[0]); });
+    zone.addEventListener('click', function (event) {
+      if (event.target.closest('button') || event.target === input) return;
+      input.click();
+    });
+    ['dragenter', 'dragover'].forEach(function (type) {
+      zone.addEventListener(type, function (event) { event.preventDefault(); zone.classList.add('is-over'); });
+    });
+    ['dragleave', 'dragend'].forEach(function (type) {
+      zone.addEventListener(type, function () { zone.classList.remove('is-over'); });
+    });
+    zone.addEventListener('drop', function (event) {
+      event.preventDefault();
+      zone.classList.remove('is-over');
+      const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      if (file) startIntake(file);
+    });
+  }
+
+  function intakeProgress() {
+    const pct = Math.round(Math.max(0, Math.min(1, state.intake.progress)) * 100);
+    const label = document.getElementById('intake-status');
+    const percent = document.getElementById('intake-percent');
+    const bar = document.getElementById('intake-bar');
+    if (label) label.textContent = state.intake.label;
+    if (percent) percent.textContent = pct + '%';
+    if (bar) { bar.style.width = pct + '%'; bar.parentNode.setAttribute('aria-valuenow', pct); }
+  }
+
+  function intakeFail(message) {
+    state.intake = freshIntake();
+    state.intake.error = message;
+    if (state.route && state.route.name === 'documents') render(true);
+    toast(message, 'error');
+  }
+
+  function startIntake(file) {
+    if (state.intake.busy) return;
+    if (!SET.can('edit')) { toast('Your role can’t upload documents.', 'error'); return; }
+    const problem = SET.checkFile(file);
+    if (problem) { toast(problem, 'error'); return; }
+    state.intake = { busy: true, progress: 0.03, label: 'Opening document…', error: '' };
+    render(true);
+    OCR.readDocument(file, {
+      onStatus: function (status) {
+        state.intake.progress = status.progress;
+        state.intake.label = status.label;
+        intakeProgress();
+      }
+    }).then(function (parsed) {
+      return intakeDocument(parsed, file);
+    }).catch(function (err) {
+      const offline = err && err.code === 'offline';
+      intakeFail((err && err.message ? err.message : 'That file could not be read.') + (offline ? ' The document reader needs a connection the first time.' : ''));
+    });
+  }
+
+  function fieldValue(fields, key) {
+    const f = fields && fields[key];
+    return f && f.value ? String(f.value).trim() : '';
+  }
+
+  function sameSnap(a, b) {
+    const ka = Object.keys(a || {}).sort();
+    const kb = Object.keys(b || {}).sort();
+    return ka.join() === kb.join() && ka.every(function (k) { return D.normKey(a[k]) === D.normKey(b[k]); });
+  }
+
+  function recordValue(worker, key) {
+    return String((key.indexOf('p:') === 0 ? (worker.profile || {})[key.slice(2)] : worker[key]) || '').trim();
+  }
+
+  function showField(key, value) {
+    if (SET.mask(key, value) !== value) return SET.mask(key, value);
+    return REVIEW_DATES.test(key) ? D.formatDate(value) : value;
+  }
+
+  async function intakeDocument(parsed, file) {
+    const kind = parsed.kind;
+    if (kind !== 'passport' && kind !== 'licence') {
+      intakeFail(kind === 'unknown'
+        ? 'We couldn’t find passport or forklift licence details on this file.'
+        : 'This looks like a ' + (S.TYPES[kind] || 'different document').toLowerCase() + '. Use New worker for other documents.');
+      return;
+    }
+    const fields = parsed.fields || {};
+    const holder = parsed.holder || {};
+    const typeName = kind === 'passport' ? 'passport' : 'forklift licence';
+    let first = fieldValue(fields, 'firstName');
+    let last = fieldValue(fields, 'surname');
+    let dob = fieldValue(fields, 'dob');
+    if (kind === 'licence') {
+      const parts = (holder.name && holder.name.value ? holder.name.value : '').trim().split(/\s+/).filter(Boolean);
+      last = parts.length > 1 ? parts.pop() : '';
+      first = parts.join(' ');
+      dob = holder.dob && holder.dob.value ? holder.dob.value : '';
+    }
+    const T = Number(SET.get('ocr.threshold')) || 80;
+    const snap = {};
+    const meta = {};
+    INTAKE_KEYS[kind].forEach(function (key) {
+      const value = fieldValue(fields, key);
+      if (!value) return;
+      snap[key] = value;
+      meta[key] = { read: value, confidence: fields[key].confidence, level: OCR.level(fields[key].confidence, T) };
+    });
+    const low = Object.keys(meta).filter(function (k) { return meta[k].level === 'low'; }).map(reviewLabel);
+    const lowNote = low.length ? ' Low confidence, check against the document: ' + low.join(', ') + '.' : '';
+    const fileName = file.name || 'document';
+    const match = D.matchWorker(state.workers, { passportNo: fieldValue(fields, 'passportNo'), licenceNo: fieldValue(fields, 'forkliftLicenceNo'), firstName: first, surname: last, dob: dob });
+    state.intake = freshIntake();
+
+    if (match) {
+      const worker = match.worker;
+      const name = D.fullName(worker);
+      const dup = S.forWorker(worker.id).find(function (d) { return d.status === 'Awaiting review' && S.slotOf(d) === kind && sameSnap(d.fields, snap); });
+      if (dup) {
+        render(true);
+        toastActions('Already attached to ' + name + '’s record and awaiting review. Nothing new was added.', [{ label: 'Open', run: function () { navigate('#/documents/' + dup.id); } }]);
+        return;
+      }
+      const diffs = Object.keys(snap).filter(function (k) {
+        const current = recordValue(worker, k);
+        return current && D.normKey(current) !== D.normKey(snap[k]);
+      }).map(function (k) { return reviewLabel(k) + ' ' + showField(k, recordValue(worker, k)) + ' → ' + showField(k, snap[k]); });
+      const rec = await S.add({
+        workerId: worker.id, slot: kind, kind: kind, fileName: fileName, uploadedBy: 'recruiter',
+        fields: snap, ocr: meta, matchedBy: match.by,
+        warning: ('Matched to ' + name + ' by ' + match.by + '.' + (diffs.length ? ' Differs from the record: ' + diffs.join('; ') + '.' : '') + lowNote).trim()
+      }, file, parsed.preview);
+      SET.log('Attached ' + typeName + ' to ' + name + ' (matched by ' + match.by + (diffs.length ? '; ' + diffs.length + ' field' + (diffs.length === 1 ? '' : 's') + ' differ' : '') + ')', 'Documents');
+      render(true);
+      toastActions('Attached to ' + name + '’s record' + (diffs.length ? ' · ' + diffs.length + ' field' + (diffs.length === 1 ? ' differs' : 's differ') : ''), [
+        { label: 'Open', run: function () { navigate('#/documents/' + rec.id); } },
+        { label: 'Undo', run: function () { undoIntake(rec.id, null, typeName + ' attached to ' + name); } }
+      ]);
+      return;
+    }
+
+    if (!first || !last) {
+      intakeFail('We couldn’t read a name on this ' + typeName + ', so no worker was created.');
+      return;
+    }
+    const base = kind === 'passport'
+      ? { firstName: first, surname: last, dob: dob, nationality: fieldValue(fields, 'nationality'), passportNo: fieldValue(fields, 'passportNo'), passportExpiry: fieldValue(fields, 'passportExpiry') }
+      : { firstName: first, surname: last, dob: dob, forkliftLicenceNo: fieldValue(fields, 'forkliftLicenceNo'), licenceExpiry: fieldValue(fields, 'licenceExpiry') };
+    const worker = D.createWorker(base);
+    if (snap['p:licenceCategory']) worker.profile = { licenceCategory: snap['p:licenceCategory'] };
+    worker.needsReview = true;
+    worker.createdFrom = typeName;
+    worker.createdAt = new Date().toISOString();
+    worker.status = D.computeStatus(worker);
+    state.workers.unshift(worker);
+    D.saveWorkers(state.workers);
+    const name = D.fullName(worker);
+    const rec = await S.add({
+      workerId: worker.id, slot: kind, kind: kind, fileName: fileName, uploadedBy: 'recruiter',
+      fields: snap, ocr: meta, createdWorker: true,
+      warning: ('New worker created automatically from this ' + typeName + '. Check every field before you verify.' + lowNote).trim()
+    }, file, parsed.preview);
+    SET.log('Created worker ' + name + ' from ' + typeName + ' upload (no match by passport number or name and date of birth)', 'Documents');
+    render(true);
+    toastActions('New worker created from ' + typeName + ': ' + name, [
+      { label: 'Open', run: function () { navigate('#/workers/' + worker.id); } },
+      { label: 'Undo', run: function () { undoIntake(rec.id, worker.id, 'new worker ' + name + ' from ' + typeName); } }
+    ]);
+  }
+
+  async function undoIntake(docId, workerId, what) {
+    await S.remove(docId);
+    let removedWorker = false;
+    if (workerId && !S.forWorker(workerId).length) {
+      state.workers = state.workers.filter(function (w) { return w.id !== workerId; });
+      D.saveWorkers(state.workers);
+      removedWorker = true;
+    }
+    SET.log('Undid upload: ' + what, 'Documents');
+    toast(removedWorker ? 'Undone. The new worker and the document were removed.' : 'Undone. The document was removed.');
+    const route = currentRoute();
+    if ((route.name === 'worker' && route.id === workerId) || (route.name === 'doc' && route.id === docId)) navigate('#/documents');
+    else render(true);
   }
 
   /* ----------------------------------------------------------- OCR wiring */
@@ -1532,6 +1809,12 @@
       navigate('#/workers');
     } else if (action === 'go-dashboard') {
       navigate('#/dashboard');
+    } else if (action === 'intake-choose') {
+      const input = document.getElementById('intake-input');
+      if (input && !state.intake.busy) { input.value = ''; input.click(); }
+    } else if (action === 'intake-specimen') {
+      if (state.intake.busy) return;
+      OCR.specimenFile(actionEl.dataset.value).then(startIntake).catch(function (err) { toast(err.message || 'Could not open the specimen.', 'error'); });
     } else if (action === 'reset-demo') {
       if (!SET.can('settings')) return;
       if (window.confirm('Reset the demo? The 12 fictional workers are restored, stored documents are removed and the audit log is cleared. Settings are kept.')) {
@@ -1541,6 +1824,7 @@
         SET.log('Reset demo data');
         state.workers = D.loadWorkers();
         state.flow = freshFlow();
+        state.intake = freshIntake();
         state.editing = false;
         state.workerDraft = null;
         toast('Demo data restored');

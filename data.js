@@ -358,6 +358,8 @@
   }
 
   function computeStatus(w) {
+    /* Created automatically from an upload: stays in Review until a person verifies it. */
+    if (w.needsReview) return 'Review';
     const S = global.DocuFlowSettings;
     const windowDays = S ? S.expiryDays() : 30;
     const dates = [w.passportExpiry, w.licenceExpiry, w.residenceCardExpiry];
@@ -371,6 +373,36 @@
       : !w.firstName || !w.surname || !w.passportNo || !w.passportExpiry || !w.pesel || (w.nationality !== 'Polish' && !w.residenceCardExpiry);
     if (missingCore) return 'Review';
     return 'Complete';
+  }
+
+  /* ---------------------------------------------------------- matching */
+
+  /* Lower-case, no accents, letters and digits only: "Kovalenko-Ołena" -> "kovalenkoolena". */
+  function normKey(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l').replace(/Ł/g, 'L')
+      .toLowerCase().replace(/[^a-z0-9]/g, '');
+  }
+
+  /* Find the worker a document belongs to. Passport number first, then licence number, then name + date of birth. */
+  function matchWorker(workers, id) {
+    const list = workers || [];
+    const pass = normKey(id.passportNo);
+    if (pass) {
+      const hit = list.find((w) => normKey(w.passportNo) === pass);
+      if (hit) return { worker: hit, by: 'passport number' };
+    }
+    const lic = normKey(id.licenceNo);
+    if (lic) {
+      const hit = list.find((w) => normKey(w.forkliftLicenceNo) === lic);
+      if (hit) return { worker: hit, by: 'licence number' };
+    }
+    const name = normKey((id.firstName || '') + (id.surname || '')) || normKey(id.fullName);
+    const nameOf = (w) => normKey((w.firstName || '') + (w.surname || ''));
+    if (name && id.dob) {
+      const hit = list.find((w) => nameOf(w) === name && w.dob === id.dob);
+      if (hit) return { worker: hit, by: 'name and date of birth' };
+    }
+    return null;
   }
 
   /* --------------------------------------------------------------- expiries */
@@ -463,6 +495,8 @@
     cloneWorker,
     computeStatus,
     nextId,
+    normKey,
+    matchWorker,
     expiryItems,
     expiryBreakdown,
     EXPIRY_TYPES,

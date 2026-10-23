@@ -128,6 +128,7 @@
   let busyPct = 0;
   let pendingDoc = null;
   let lastCtx = null;
+  let ocrReview = null;
   let availability = [true, true, true, false, true, true, false];
 
   /* -------------------------------------------------------------- helpers */
@@ -619,7 +620,10 @@
       '<p class="lede">Everything ' + esc(SET.get('org.short')) + ' holds for you, with the date each one runs out. ' + esc(reminderLine()) + '</p>' +
       '</div></header>' +
       '<div class="card emp-autofill">' + iconBox('spark', 'blue') +
-      '<span><strong>Snap a photo, we do the typing.</strong> When you upload a new passport or residence card, DocuFlow reads it and fills in your details for you to check.</span></div>' +
+      '<span><strong>Snap a photo, we do the typing.</strong> When you upload a new passport or forklift licence, DocuFlow reads it on this device and fills in the details for you to check. Nothing is sent until you press Confirm.' +
+      '<span class="emp-specimens">No document to hand? Try a specimen: ' +
+      '<button type="button" class="link-button" data-emp="specimen" data-doc="passport" data-specimen="passport"' + (busyDoc ? ' disabled' : '') + '>passport</button> · ' +
+      '<button type="button" class="link-button" data-emp="specimen" data-doc="licence" data-specimen="licence"' + (busyDoc ? ' disabled' : '') + '>forklift licence (PDF)</button></span></span></div>' +
       '<div class="emp-filters">' + filters + '</div>' +
       (cards ? '<div class="emp-grid two">' + cards + '</div>' : '<div class="card"><div class="emp-note"><div class="emp-alert-main"><strong>Nothing in this filter</strong><p>Try another filter to see your documents.</p></div></div></div>');
   }
@@ -867,15 +871,26 @@
       return;
     }
 
+    let preview = '';
+    const reviewed = doc.id === 'passport' || doc.id === 'licence';
     OCR.readDocument(file, {
+      onPreview: function (src) { preview = src; },
       onStatus: function (status) {
         if (busyDoc !== docId) return;
         busyPct = status && typeof status.progress === 'number' ? status.progress : 0;
         updateBusyButtons();
       }
     }).then(function (result) {
+      if (reviewed && result.kind === 'unknown') {
+        openManualReview(w, doc, file, result.preview || preview, 'We couldn’t find the details on this document.');
+        return;
+      }
       if (result.kind !== doc.kind) {
         fail('That doesn\'t look like a ' + doc.expected + '. Nothing was changed.');
+        return;
+      }
+      if (reviewed) {
+        openReview(w, doc, file, result, fail);
         return;
       }
       const fields = result.fields || {};
@@ -919,7 +934,231 @@
       }
       sendForReview(snap, result.kind, result.preview, warning);
     }).catch(function (err) {
-      fail(err && err.message ? err.message : 'That file could not be read. Try a clearer photo.');
+      const message = err && err.message ? err.message : 'That file could not be read. Try a clearer photo.';
+      /* Reader unavailable (offline, CDN blocked) or crashed: let the worker type it in instead. */
+      if (reviewed && err && (err.code === 'offline' || /text reader/i.test(message))) {
+        openManualReview(w, doc, file, preview, message);
+        return;
+      }
+      fail(message);
+    });
+  }
+
+  /* ------------------------------------------------ check what we read */
+
+  const REVIEW_FIELDS = {
+    passport: [
+      { key: 'firstName', label: 'First name', identity: true },
+      { key: 'surname', label: 'Surname', identity: true },
+      { key: 'dob', label: 'Date of birth', type: 'date', identity: true },
+      { key: 'nationality', label: 'Nationality', identity: true },
+      { key: 'passportNo', label: 'Passport number', save: true, required: true, mono: true },
+      { key: 'passportExpiry', label: 'Passport expiry', type: 'date', save: true, required: true }
+    ],
+    licence: [
+      { key: 'holderName', label: 'Name on licence', identity: true, holder: 'name' },
+      { key: 'holderDob', label: 'Date of birth', type: 'date', identity: true, holder: 'dob' },
+      { key: 'forkliftLicenceNo', label: 'Licence number', save: true, required: true, mono: true },
+      { key: 'p:licenceCategory', label: 'Category', save: true },
+      { key: 'licenceExpiry', label: 'Licence expiry', type: 'date', save: true, required: true }
+    ]
+  };
+
+  function threshold() { return Number(SET.get('ocr.threshold')) || 80; }
+
+  function recordValue(w, f) {
+    if (f.key === 'holderName') return D.fullName(w);
+    if (f.key === 'holderDob') return w.dob || '';
+    return getField(w, f.key) || '';
+  }
+
+  function sameValue(a, b) { return D.normKey(a) === D.normKey(b); }
+
+  function showValue(f, value) { return f.type === 'date' && value ? D.formatDate(value) : String(value || ''); }
+
+  function buildReview(w, doc, file, preview, readFields, holder, manual, reason) {
+    const fields = REVIEW_FIELDS[doc.id].map(function (f) {
+      const read = f.holder ? (holder && holder[f.holder]) : readFields[f.key];
+      const value = read && read.value ? String(read.value).trim() : '';
+      const confidence = value && !manual ? Number(read.confidence) || 0 : null;
+      return Object.assign({}, f, {
+        value: value,
+        read: value,
+        confidence: confidence,
+        level: confidence === null ? '' : OCR.level(confidence, threshold()),
+        note: read && read.note ? read.note : '',
+        record: String(recordValue(w, f) || ''),
+        edited: false,
+        ok: false
+      });
+    }).filter(function (f) { return manual ? !f.identity : (f.value || !f.identity); });
+    return { docId: doc.id, title: doc.title, file: file, fileName: file.name || 'document', preview: preview || '', fields: fields, manual: !!manual, reason: reason || '' };
+  }
+
+  function openReview(w, doc, file, result, fail) {
+    const fields = result.fields || {};
+    const holder = result.holder || {};
+    /* A confident read of someone else's name is refused, as before. */
+    const T = threshold();
+    let mismatch = '';
+    if (doc.id === 'passport') {
+      const first = fields.firstName && fields.firstName.value ? String(fields.firstName.value).trim() : '';
+      const last = fields.surname && fields.surname.value ? String(fields.surname.value).trim() : '';
+      const sure = (!first || fields.firstName.confidence >= T) && (!last || fields.surname.confidence >= T);
+      const differs = (first && first.toLowerCase() !== String(w.firstName || '').trim().toLowerCase()) ||
+        (last && last.toLowerCase() !== String(w.surname || '').trim().toLowerCase());
+      if (differs && sure) mismatch = [first, last].filter(Boolean).join(' ') || 'someone else';
+    } else if (holder.name && holder.name.value && holder.name.confidence >= T && !sameValue(holder.name.value, D.fullName(w))) {
+      mismatch = holder.name.value;
+    }
+    if (mismatch) { fail('This document belongs to ' + mismatch + ', not you. Nothing was changed.'); return; }
+    ocrReview = buildReview(w, doc, file, result.preview, fields, holder, false, '');
+    showReview();
+  }
+
+  function openManualReview(w, doc, file, preview, reason) {
+    ocrReview = buildReview(w, doc, file, preview, {}, {}, true, reason);
+    showReview();
+  }
+
+  function showReview() {
+    busyDoc = null;
+    busyPct = 0;
+    rerender();
+    const card = document.getElementById('ocr-review');
+    if (!card) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    const title = document.getElementById('ocr-review-title');
+    if (title) title.focus({ preventScroll: true });
+  }
+
+  const LEVEL_LABEL = { high: 'High', medium: 'Medium', low: 'Low' };
+
+  function fieldState(f) {
+    if (f.edited) return 'edited';
+    if (f.ok) return 'checked';
+    return f.level || 'manual';
+  }
+
+  function confBadge(f) {
+    if (f.edited) return '<span class="conf conf-edited">Edited by you</span>';
+    if (f.ok) return '<span class="conf conf-high">Checked by you</span>';
+    if (!f.level) return '';
+    return '<span class="conf conf-' + f.level + '" title="Reader confidence ' + f.confidence + '%">' + LEVEL_LABEL[f.level] + ' · ' + f.confidence + '%</span>';
+  }
+
+  function fieldNote(f) {
+    const parts = [];
+    if (f.level === 'low' && !f.edited && !f.ok && f.value) {
+      parts.push('<span class="ocr-flag">Please compare this with your document' + (f.note ? ' (' + esc(f.note.toLowerCase()) + ')' : '') + '.</span> ' +
+        '<button type="button" class="link-button" data-emp="ocr-ok" data-key="' + esc(f.key) + '">It’s correct</button>');
+    }
+    if (f.value && f.record && !sameValue(f.value, f.record)) {
+      parts.push(f.identity
+        ? 'Your record says ' + esc(showValue(f, f.record)) + '. Your coordinator will be told.'
+        : 'Replaces ' + esc(showValue(f, f.record)) + ' once your coordinator verifies it.');
+    }
+    return parts.length ? '<p class="ocr-note">' + parts.join(' ') + '</p>' : '';
+  }
+
+  function ocrFieldMarkup(f) {
+    const id = 'ocr-f-' + f.key.replace(/[^a-z0-9]/gi, '');
+    return '<div class="ocr-field is-' + fieldState(f) + '" data-ocr-wrap="' + esc(f.key) + '">' +
+      '<div class="ocr-field-top"><label for="' + id + '">' + esc(f.label) + (f.required ? '' : ' <span class="ocr-opt">optional</span>') + '</label>' + confBadge(f) + '</div>' +
+      '<input id="' + id + '" type="' + (f.type === 'date' ? 'date' : 'text') + '"' + (f.mono ? ' class="mono"' : '') +
+      ' data-ocr-field="' + esc(f.key) + '" value="' + esc(f.value) + '" autocomplete="off"' +
+      (f.level === 'low' && !f.edited && !f.ok ? ' aria-invalid="true"' : '') + '>' +
+      fieldNote(f) + '</div>';
+  }
+
+  function ocrReviewMarkup() {
+    const r = ocrReview;
+    const counts = { high: 0, medium: 0, low: 0 };
+    r.fields.forEach(function (f) { if (f.level) counts[f.level] += 1; });
+    const legend = r.manual ? '' : '<div class="ocr-legend" aria-label="How sure the reader was">' +
+      ['high', 'medium', 'low'].map(function (l) { return '<span class="conf conf-' + l + '">' + LEVEL_LABEL[l] + ' · ' + counts[l] + '</span>'; }).join('') + '</div>';
+    const intro = r.manual
+      ? '<div class="notice notice-warn ocr-fallback" role="alert"><span>' + esc(r.reason) + ' You can type the details in yourself. Your coordinator will compare them with the file.</span></div>'
+      : '<p class="card-sub">We filled these in from <strong>' + esc(r.fileName) + '</strong>. Check each one against your document and fix anything that’s wrong. Nothing is sent until you press Confirm.</p>';
+    return '<section class="card ocr-review" id="ocr-review" aria-labelledby="ocr-review-title">' +
+      '<div class="card-head"><div><h2 id="ocr-review-title" tabindex="-1">' + (r.manual ? 'Type in your ' : 'Check what we read from your ') + esc(r.title.toLowerCase()) + '</h2>' + intro + '</div>' + legend + '</div>' +
+      '<div class="ocr-body">' +
+        (r.preview ? '<figure class="ocr-preview"><img src="' + esc(r.preview) + '" alt="Your uploaded ' + esc(r.title.toLowerCase()) + '"><figcaption>' + esc(r.fileName) + '</figcaption></figure>' : '') +
+        '<div class="ocr-fields">' + r.fields.map(ocrFieldMarkup).join('') + '</div>' +
+      '</div>' +
+      '<div class="ocr-actions"><button type="button" class="btn btn-quiet" data-emp="ocr-cancel">Cancel</button>' +
+      '<button type="button" class="btn btn-primary" data-emp="ocr-confirm">Confirm and send for review</button></div>' +
+      '</section>';
+  }
+
+  function refreshOcrField(key) {
+    const f = ocrReview && ocrReview.fields.find(function (x) { return x.key === key; });
+    const wrap = document.querySelector('[data-ocr-wrap="' + key + '"]');
+    if (!f || !wrap) return;
+    wrap.className = 'ocr-field is-' + fieldState(f);
+    const top = wrap.querySelector('.ocr-field-top');
+    const badge = top.querySelector('.conf');
+    if (badge) badge.remove();
+    top.insertAdjacentHTML('beforeend', confBadge(f));
+    const note = wrap.querySelector('.ocr-note');
+    if (note) note.remove();
+    wrap.insertAdjacentHTML('beforeend', fieldNote(f));
+    const input = wrap.querySelector('input');
+    if (input) { if (f.level === 'low' && !f.edited && !f.ok) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid'); }
+  }
+
+  function confirmReview() {
+    const ctx = lastCtx;
+    const w = me(ctx);
+    const r = ocrReview;
+    if (!w || !r) return;
+    const doc = docsFor(w).find(function (d) { return d.id === r.docId; });
+    if (!doc) return;
+    const focus = function (key) { const el = document.querySelector('[data-ocr-field="' + key + '"]'); if (el) el.focus(); };
+    const unchecked = r.fields.filter(function (f) { return f.level === 'low' && f.value && !f.edited && !f.ok; });
+    if (unchecked.length) {
+      ctx.toast('Check the fields marked Low first: ' + unchecked.map(function (f) { return f.label; }).join(', ') + '.', 'error');
+      focus(unchecked[0].key);
+      return;
+    }
+    const missing = r.fields.filter(function (f) { return f.required && !String(f.value).trim(); });
+    if (missing.length) {
+      ctx.toast('Add the ' + missing.map(function (f) { return f.label.toLowerCase(); }).join(' and ') + ' first.', 'error');
+      focus(missing[0].key);
+      return;
+    }
+    const snap = {};
+    const meta = {};
+    const notes = [];
+    r.fields.forEach(function (f) {
+      const value = String(f.value || '').trim();
+      if (f.save && value) snap[f.key] = value;
+      meta[f.key] = { read: f.read, confidence: f.confidence, level: f.level || 'manual', edited: f.edited, checked: f.ok };
+      if (f.identity && value && f.record && !sameValue(value, f.record)) {
+        notes.push(f.label + ' on the ' + r.title.toLowerCase() + ' is ' + showValue(f, value) + ', but the record says ' + showValue(f, f.record) + '.');
+      }
+    });
+    if (r.manual) notes.unshift('Typed in by the employee; the document could not be read automatically.');
+    const warning = notes.join(' ');
+    const file = r.file;
+    ocrReview = null;
+    window.DocuFlowStore.add({
+      workerId: w.id,
+      slot: doc.id,
+      kind: doc.kind,
+      type: '',
+      fileName: file.name || 'document',
+      uploadedBy: 'employee',
+      fields: snap,
+      warning: warning,
+      ocr: meta,
+      confirmedAt: new Date().toISOString()
+    }, file, r.preview).then(function () {
+      addSessionEvent('You sent your new ' + doc.title.toLowerCase() + ' for review', 'Your coordinator will check it before your record changes');
+      rerender();
+      if (warning) ctx.toast('Sent for review. ' + warning, 'error');
+      else ctx.toast('Sent for review. Your coordinator will check it.');
     });
   }
 
@@ -1010,11 +1249,11 @@
     setBadge('emp-count-docs', counts.docs);
     setBadge('emp-count-notes', counts.notes);
 
-    let html;
-    if (sub === 'details') html = detailsView(w);
-    else if (sub === 'documents') html = documentsView(w);
-    else if (sub === 'notifications') html = notificationsView(w);
-    else html = homeView(w);
+    let html = ocrReview ? ocrReviewMarkup(w) : '';
+    if (sub === 'details') html += detailsView(w);
+    else if (sub === 'documents') html += documentsView(w);
+    else if (sub === 'notifications') html += notificationsView(w);
+    else html += homeView(w);
 
     return html + fileInput() + tabbar(counts);
   }
@@ -1064,12 +1303,33 @@
       rerender();
     } else if (action === 'upload') {
       if (busyDoc) return;
+      if (ocrReview) {
+        ctx.toast('Confirm or cancel the document you’re checking first.', 'error');
+        const card = document.getElementById('ocr-review');
+        if (card) card.scrollIntoView({ block: 'start' });
+        return;
+      }
       pendingDoc = el.dataset.doc;
       const input = document.getElementById('emp-file');
       if (input) {
         input.value = '';
         input.click();
       }
+    } else if (action === 'specimen') {
+      if (busyDoc || ocrReview) return;
+      const slot = el.dataset.doc;
+      if (!docsFor(w).some(function (d) { return d.id === slot; })) { ctx.toast('This document isn’t on your list.', 'error'); return; }
+      OCR.specimenFile(el.dataset.specimen).then(function (file) { uploadDocument(file, slot); })
+        .catch(function (err) { ctx.toast(err.message || 'Could not open the specimen.', 'error'); });
+    } else if (action === 'ocr-ok') {
+      const f = ocrReview && ocrReview.fields.find(function (x) { return x.key === el.dataset.key; });
+      if (f) { f.ok = true; refreshOcrField(f.key); }
+    } else if (action === 'ocr-cancel') {
+      ocrReview = null;
+      rerender();
+      ctx.toast('Cancelled. Nothing was sent.');
+    } else if (action === 'ocr-confirm') {
+      confirmReview();
     } else if (action === 'download') {
       ctx.toast('No verified copy yet. Upload one and your coordinator will verify it.');
     } else if (action === 'doc-filter') {
@@ -1107,6 +1367,17 @@
     const problem = SET.checkFile(file);
     if (problem) { if (lastCtx) lastCtx.toast(problem, 'error'); return; }
     uploadDocument(file, docId);
+  });
+
+  document.addEventListener('input', function (event) {
+    const key = event.target.dataset ? event.target.dataset.ocrField : '';
+    if (!key || !ocrReview) return;
+    const f = ocrReview.fields.find(function (x) { return x.key === key; });
+    if (!f) return;
+    f.value = event.target.value;
+    const was = f.edited;
+    f.edited = !ocrReview.manual && f.value !== f.read;
+    if (was !== f.edited || ocrReview.manual) refreshOcrField(key);
   });
 
   document.addEventListener('keydown', function (event) {

@@ -53,6 +53,14 @@
     return rec;
   }
   async function update(id, patch) { const rec = get(id); if (!rec) return null; Object.assign(rec, patch); if (db) await req(store('readwrite').put(rec)); return rec; }
+  async function remove(id) {
+    const rec = get(id);
+    if (!rec) return false;
+    items = items.filter(function (d) { return d.id !== id; });
+    ['preview', 'original'].forEach(function (w) { const k = id + ':' + w; if (urls[k]) { URL.revokeObjectURL(urls[k]); delete urls[k]; } });
+    if (db) await req(store('readwrite').delete(id));
+    return true;
+  }
   function get(id) { return items.find(function (d) { return d.id === id; }) || null; }
   function all() { return items.slice(); }
   function forWorker(workerId) { return items.filter(function (d) { return d.workerId === workerId; }); }
@@ -160,5 +168,5 @@
     download(get(el.dataset.histDownload));
   });
   async function clear() { items = []; Object.keys(urls).forEach(function (k) { URL.revokeObjectURL(urls[k]); delete urls[k]; }); if (db) await req(store('readwrite').clear()); }
-  global.DocuFlowStore = { init, add, update, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, restoreLine, stamp, download, isReady: function () { return ready; } };
+  global.DocuFlowStore = { init, add, update, remove, get, all, forWorker, url, clear, TYPES, slotOf, history, current, historyHtml, auditLine, restoreLine, stamp, download, isReady: function () { return ready; } };
 })(window);

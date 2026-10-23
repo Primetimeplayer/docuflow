@@ -88,9 +88,11 @@
 
   /* ------------------------------------------------------------ audit */
   function auditLog() { try { return JSON.parse(global.localStorage.getItem(LOG_KEY) || '[]'); } catch (err) { return []; } }
-  function log(action) {
+  function log(action, area) {
     const list = auditLog();
-    list.unshift({ at: new Date().toISOString(), by: ME + ' (' + role() + ')', action: action });
+    const entry = { at: new Date().toISOString(), by: ME + ' (' + role() + ')', action: action };
+    if (area) entry.area = area;
+    list.unshift(entry);
     try { global.localStorage.setItem(LOG_KEY, JSON.stringify(list.slice(0, 200))); } catch (err) { /* ignore */ }
   }
   function clearLog() { try { global.localStorage.removeItem(LOG_KEY); } catch (err) { /* ignore */ } }

@@ -1305,6 +1305,41 @@ svg { display: block; }
 }
 .toast-error .toast-mark { background: #f04438; }
 
+/* toast with Open / Undo buttons */
+.toast-has-actions { pointer-events: auto; }
+.toast-body { display: flex; flex-direction: column; gap: 6px; }
+.toast-actions { display: flex; gap: 6px; }
+.toast-btn {
+  padding: 3px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast-btn:hover { background: rgba(255, 255, 255, 0.18); }
+.toast-btn:focus-visible { outline: 2px solid #84adff; outline-offset: 2px; }
+
+/* recruiter upload: find or create a worker */
+.intake-card { margin-bottom: 16px; overflow: hidden; }
+.intake-card .card-head { padding-bottom: 0; }
+.intake-body { padding-bottom: 16px; }
+.intake-card .dropzone { padding: 18px; }
+.intake-card .progress-block { margin-top: 16px; }
+.intake-error { margin: 12px 20px 0; }
+.intake-samples { margin: 10px 20px 0; color: var(--muted); font-size: 11px; }
+.intake-samples .link-button { display: inline; font-size: 11px; }
+.status-new { font-weight: 650; }
+.new-worker-notice { margin: 0 0 16px; }
+.new-worker-notice .btn { align-self: flex-start; margin-top: 6px; }
+.table-review .conf { margin-left: 6px; vertical-align: 1px; }
+@media (prefers-reduced-motion: reduce) {
+  .toast, .dropzone { transition: none; }
+}
+
 /* ------------------------------------------------------------- responsive */
 
 @media (max-width: 1150px) {

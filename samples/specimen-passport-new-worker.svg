@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="660" viewBox="0 0 1000 660">
+<!-- DocuFlow SPECIMEN. Fictional person, fictional number. Not a real document. -->
+<style>.l{font:600 11px Arial,Helvetica,sans-serif;fill:#8a8474;letter-spacing:.04em}.v{font:600 21px "Courier New",Courier,monospace;fill:#22252b}.m{font:600 27px "Courier New",Courier,monospace;fill:#111;letter-spacing:.06em}</style>
+<rect width="1000" height="660" fill="#f4f1e7"/>
+<rect x="18" y="18" width="964" height="624" fill="none" stroke="#d6d0c0" stroke-width="2"/>
+<rect x="26" y="26" width="948" height="74" fill="#0b1530"/>
+<text x="52" y="72" style="font:700 28px Georgia,'Times New Roman',serif;fill:#fff">PASSPORT</text>
+<text x="52" y="92" style="font:600 13px Arial,sans-serif;fill:#aebad4">UKRAINE · SPECIMEN</text>
+<text x="946" y="72" text-anchor="end" style="font:600 12px Arial,sans-serif;fill:#fff">TYPE P · CODE UKR</text>
+<text x="52" y="152" class="l">SURNAME</text><text x="52" y="177" class="v">MOROZ</text>
+<text x="52" y="212" class="l">GIVEN NAMES</text><text x="52" y="237" class="v">TETIANA</text>
+<text x="52" y="272" class="l">NATIONALITY</text><text x="52" y="297" class="v">UKRAINIAN</text>
+<text x="52" y="332" class="l">DATE OF BIRTH</text><text x="52" y="357" class="v">02 AUG 1997</text>
+<text x="330" y="332" class="l">SEX</text><text x="330" y="357" class="v">F</text>
+<text x="390" y="332" class="l">PASSPORT NO.</text><text x="390" y="357" class="v">FT4409182</text>
+<text x="52" y="396" class="l">DATE OF EXPIRY</text><text x="52" y="421" class="v">05 NOV 2034</text>
+<text x="390" y="396" class="l">AUTHORITY</text><text x="390" y="421" class="v">SPECIMEN OFFICE</text>
+<rect x="760" y="128" width="170" height="214" rx="6" fill="#e6e1d3" stroke="#d6d0c0"/>
+<circle cx="845" cy="205" r="42" fill="#cfc8b6"/><rect x="785" y="262" width="120" height="62" rx="30" fill="#cfc8b6"/>
+<text x="845" y="362" text-anchor="middle" class="l">PHOTO</text>
+<text x="600" y="300" text-anchor="middle" transform="rotate(-18 600 300)" style="font:800 92px Arial,sans-serif;fill:#c0392b;fill-opacity:.13;letter-spacing:.12em">SPECIMEN</text>
+<text x="52" y="470" style="font:700 13px Arial,sans-serif;fill:#c0392b">SPECIMEN — NOT A REAL DOCUMENT · DOCUFLOW DEMO</text>
+<rect x="26" y="500" width="948" height="134" fill="#fbfaf5"/>
+<text x="52" y="555" class="m">P&lt;UKRMOROZ&lt;&lt;TETIANA&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;</text>
+<text x="52" y="605" class="m">FT44091826UKR9708022F3411059&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;02</text>
+</svg>

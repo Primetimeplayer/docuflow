@@ -198,7 +198,7 @@
 
   function auditRows() {
     const docs = window.DocuFlowReports && window.DocuFlowReports.events ? window.DocuFlowReports.events(ctx.workers || []) : [];
-    const settings = SET.auditLog().map(function (e) { return { at: e.at, area: 'Settings', action: e.action, by: e.by }; });
+    const settings = SET.auditLog().map(function (e) { return { at: e.at, area: e.area || 'Settings', action: e.action, by: e.by }; });
     return settings.concat(docs.map(function (e) { return { at: e.at, area: 'Documents', action: e.action + ' · ' + e.doc.type + ' · ' + e.worker, by: e.by }; }))
       .sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
   }

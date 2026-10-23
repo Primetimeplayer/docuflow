@@ -1,0 +1,48 @@
+%PDF-1.4
+% DocuFlow SPECIMEN - fictional person - not a real document
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 420] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+6 0 obj
+<< /Length 821 >>
+stream
+0.96 0.95 0.91 rg 0 0 595 420 re f
+0.04 0.08 0.19 rg 0 400 595 20 re f
+BT 0.75 0.22 0.17 rg /F2 11 Tf 40 380 Td (SPECIMEN - NOT A REAL DOCUMENT - DOCUFLOW DEMO) Tj ET
+BT 0.04 0.08 0.19 rg /F2 22 Tf 40 340 Td (FORKLIFT OPERATOR LICENCE) Tj ET
+BT 0.35 0.35 0.35 rg /F1 12 Tf 40 318 Td (Specimen technical inspection office) Tj ET
+BT 0.13 0.13 0.13 rg /F1 16 Tf 40 270 Td (Holder name: OLENA KOVALENKO) Tj ET
+BT 0.13 0.13 0.13 rg /F1 16 Tf 40 240 Td (Date of birth: 14.06.1991) Tj ET
+BT 0.13 0.13 0.13 rg /F1 16 Tf 40 210 Td (Licence No: UDT/2026/03152) Tj ET
+BT 0.13 0.13 0.13 rg /F1 16 Tf 40 180 Td (Category: I WJO) Tj ET
+BT 0.13 0.13 0.13 rg /F1 16 Tf 40 150 Td (Issued: 01.10.2026) Tj ET
+BT 0.13 0.13 0.13 rg /F1 16 Tf 40 120 Td (Valid until: 30.09.2031) Tj ET
+BT 0.93 0.72 0.72 rg /F2 58 Tf 300 40 Td (SPECIMEN) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000070 00000 n 
+0000000119 00000 n 
+0000000176 00000 n 
+0000000312 00000 n 
+0000000382 00000 n 
+0000000457 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1328
+%%EOF
