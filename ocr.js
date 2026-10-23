@@ -68,7 +68,7 @@
   function titleCase(value) {
     return String(value)
       .toLowerCase()
-      .replace(/(^|[\s'-])([a-zà-ÿ])/g, (m, sep, ch) => sep + ch.toUpperCase());
+      .replace(/(^|[\s'-])([a-zà-ÿā-ž])/g, (m, sep, ch) => sep + ch.toUpperCase());
   }
 
   function mrzDate(value, birth) {
@@ -189,7 +189,7 @@
     const expiryRaw = line2.slice(21, 27);
     const expiryCheck = checkDigit(expiryRaw) === line2[27];
     const personal = line2.slice(28, 42);
-    const personalCheck = checkDigit(personal) === line2[42];
+    const personalCheck = checkDigit(personal) === line2[42] || (/^<+$/.test(personal) && line2[42] === '<');
     const composite = line2.slice(0, 10) + line2.slice(13, 20) + line2.slice(21, 28) + line2.slice(28, 43);
     const compositeCheck = checkDigit(composite) === line2[43];
 
@@ -281,7 +281,7 @@
   }
 
   const DATE_TOKEN = /(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})/;
-  const EXPIRY_LABEL = /(valid\s+until|date\s+of\s+expiry|expiry\s+date|expires|wa[zż]na\s+do|data\s+wa[zż]no[śs]ci)/i;
+  const EXPIRY_LABEL = /(valid\s+until|date\s+of\s+expiry|expiry\s+date|expires|wa[zż]n[ae]\s+do|data\s+wa[zż]no[śs]ci)/i;
 
   function labelledDate(text, labelRe) {
     const lines = String(text || '').split(/\r?\n/);
@@ -320,7 +320,7 @@
     const lines = String(text || '').split(/\r?\n/);
     for (const line of lines) {
       if (!labels.test(line) || NAME_SKIP.test(line)) continue;
-      const value = line.replace(labels, '').replace(/\(?\s*imiona\s*\)?/i, '').replace(/^[\s:.-]+/, '').replace(/[^A-Za-zÀ-ÿ' -]/g, '').trim();
+      const value = line.replace(labels, '').replace(/\(?\s*imiona\s*\)?/i, '').replace(/^[\s:.-]+/, '').replace(/[^A-Za-zÀ-ÿĀ-ž' -]/g, '').trim();
       if (value.length >= 2) return titleCase(value.slice(0, 40));
     }
     return '';
@@ -362,7 +362,7 @@
       fields['p:licenceCategory'] = { value, confidence: 85, source, note: 'Pattern match, no check digit' };
     }
     const holder = {};
-    const name = labeledName(text, /holder\s*name|holder|imi[eę]\s+i\s+nazwisko|name/i);
+    const name = labeledName(text, /holder\s*name|holder|imi[eę]\s+i\s+nazwisko|\bname\b/i);
     if (name) holder.name = { value: name, confidence: 85, source, raw: name };
     const dob = labelledDate(text, /date\s+of\s+birth|data\s+urodzenia|born/i);
     if (dob) holder.dob = { value: dob, confidence: 90, source };
@@ -967,6 +967,7 @@
     runSample,
     sampleCanvas,
     level,
+    scoreFields,
     specimenFile,
     SPECIMENS,
     SAMPLE,
